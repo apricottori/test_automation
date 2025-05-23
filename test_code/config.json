@@ -1,0 +1,24 @@
+{
+    "chip_id": "0x18",
+    "multimeter_use": false,
+    "multimeter_serial": "write gpib serial number",
+    "sourcemeter_use": false,
+    "sourcemeter_serial": "write gpib serial number",
+    "chamber_use": false,
+    "chamber_serial": "write gpib serial number",
+    "excel_export_sheets_config": [
+        {
+            "sheet_name": "AllData",
+            "columns": [
+                "Timestamp",
+                "Variable Name",
+                "Value",
+                "Sample Number"
+            ]
+        }
+    ],
+    "error_halts_sequence": false,
+    "multimeter_gpib": "GPIB0::22::INSTR",
+    "sourcemeter_gpib": "GPIB0::24::INSTR",
+    "chamber_gpib": ""
+}
