@@ -292,12 +292,13 @@ class SequenceControllerTab(QWidget):
             action_buttons_layout.addWidget(self.define_loop_button)
             left_panel_layout.addLayout(action_buttons_layout)
 
+            # Stretch before SavedSequencePanel and Play/Stop buttons
+            left_panel_layout.addStretch(1)
+
             self.saved_sequence_panel = SavedSequencePanel(self.sequence_io_manager, self.saved_sequences_dir, parent=left_panel_widget)
             if not self.saved_sequence_panel: raise RuntimeError("SavedSequencePanel creation failed.")
             left_panel_layout.addWidget(self.saved_sequence_panel)
             
-            left_panel_layout.addStretch(1) 
-
             play_stop_button_layout = QHBoxLayout()
             self.play_seq_button = QPushButton(constants.SEQ_PLAY_BUTTON_TEXT, left_panel_widget)
             try: self.play_seq_button.setIcon(QApplication.style().standardIcon(QStyle.SP_MediaPlay))
@@ -458,20 +459,28 @@ class SequenceControllerTab(QWidget):
         dialog = LoopDefinitionDialog(target_actions_data, self)
         if dialog.exec_() == QDialog.Accepted:
             loop_params = dialog.get_loop_parameters()
-            if loop_params:
-                loop_start_str = "; ".join([f"{k}={v}" for k, v in loop_params.items()])
-                
-                first_selected_row = self.sequence_list_widget.row(selected_items_widgets[0])
-                last_selected_row = self.sequence_list_widget.row(selected_items_widgets[-1])
+            if loop_params is None:
+                self.log_message("루프 정의가 취소되었거나 파라미터가 유효하지 않습니다.")
+                return
 
-                self.sequence_list_widget.insertItem(first_selected_row, f"{constants.SEQ_PREFIX_LOOP_START}: {loop_start_str}")
-                
-                for i in range(len(selected_items_widgets)):
-                    item_to_indent = self.sequence_list_widget.item(first_selected_row + 1 + i) 
-                    if item_to_indent and not item_to_indent.text().startswith("  "): 
-                        item_to_indent.setText("  " + item_to_indent.text())
-                
-                self.sequence_list_widget.insertItem(last_selected_row + 2, "  " + constants.SEQ_PREFIX_LOOP_END) 
+            loop_start_item_text = f"{constants.SEQ_PREFIX_LOOP_START}: " \
+                                 f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={loop_params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX]}; " \
+                                 f"{constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY}='{loop_params[constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY]}'; " \
+                                 f"{constants.SEQ_PARAM_KEY_LOOP_START_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_START_VALUE]}; " \
+                                 f"{constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE]}; " \
+                                 f"{constants.SEQ_PARAM_KEY_LOOP_END_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_END_VALUE]}"
+
+            first_selected_row = self.sequence_list_widget.row(selected_items_widgets[0])
+            last_selected_row = self.sequence_list_widget.row(selected_items_widgets[-1])
+
+            self.sequence_list_widget.insertItem(first_selected_row, loop_start_item_text)
+            
+            for i in range(len(selected_items_widgets)):
+                item_to_indent = self.sequence_list_widget.item(first_selected_row + 1 + i) 
+                if item_to_indent and not item_to_indent.text().startswith("  "): 
+                    item_to_indent.setText("  " + item_to_indent.text())
+            
+            self.sequence_list_widget.insertItem(last_selected_row + 2, "  " + constants.SEQ_PREFIX_LOOP_END) 
 
     def _is_item_in_loop(self, item_index: int) -> bool:
         if self.sequence_list_widget is None: return False # None 체크로 변경

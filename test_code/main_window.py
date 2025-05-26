@@ -303,7 +303,7 @@ class RegMapWindow(QMainWindow):
         chip_id = chip_id_from_settings_tab if chip_id_from_settings_tab else self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "")
         if chip_id:
             # I2CDevice 생성자에 chip_id_str 대신 chip_id 전달 (사용자 제공 코드 기준)
-            self.i2c_device = I2CDevice(chip_id=chip_id) # chip_id_str -> chip_id
+            self.i2c_device = I2CDevice(chip_id_str=chip_id) # chip_id -> chip_id_str
             if self.i2c_device and self.i2c_device.is_opened:
                 if hasattr(self.i2c_device, 'change_port'):
                     if not self.i2c_device.change_port(0):
@@ -714,7 +714,7 @@ class RegMapWindow(QMainWindow):
                     if hasattr(self.tab_reg_viewer_widget, 'update_register_map'):
                         self.tab_reg_viewer_widget.update_register_map(self.register_map)
                     if hasattr(self.tab_reg_viewer_widget, 'populate_table'):
-                        self.tab_reg_viewer_widget.populate_table() # 인자 없이 호출 (RegisterViewerTab 구현에 따라 다름)
+                        self.tab_reg_viewer_widget.populate_table(self.register_map) # Pass self.register_map
                 if self.tabs and self.tab_reg_viewer_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), True)
 
                 if self.completer_model: # completer_model None 체크

@@ -43,7 +43,9 @@ class LoopDefinitionDialog(QDialog):
         self.end_value_input: Optional[QLineEdit] = None
         self.button_box: Optional[QDialogButtonBox] = None
 
-        self.action_param_map: Dict[int, List[str]] = {} # action_combo_idx -> list_of_param_keys
+        self.action_param_map: Dict[int, List[str]] = {} # 콤보박스 인덱스 -> 해당 액션의 루프 가능한 파라미터 이름 리스트
+
+        print(f"DEBUG_LoopDialog_Init: Received target_actions_data: {target_actions_data}")
 
         main_layout = QVBoxLayout(self)
 
@@ -55,10 +57,13 @@ class LoopDefinitionDialog(QDialog):
         self.action_combo = QComboBox()
         self.param_combo = QComboBox()
 
-        for original_idx, prefix, params in self.target_actions_data: # params는 SequencePlayer가 생성한 딕셔셔너리
-            loopable_numeric_params = []
-            # I2C 쓰기 액션의 'VAL' 파라미터 (16진수지만 숫자처럼 증감 가능)
-            if prefix in [constants.SEQ_PREFIX_I2C_WRITE_NAME, constants.SEQ_PREFIX_I2C_WRITE_ADDR]:
+        for original_idx, prefix, params in target_actions_data:
+            loopable_numeric_params: List[str] = []
+            print(f"DEBUG_LoopDialog_Init: Processing action original_idx={original_idx}, prefix='{prefix}', params={params}")
+
+            # I2C Write 액션의 'VAL' 파라미터 (16진수 문자열이나 정수형으로 변환될 값)
+            if prefix == constants.SEQ_PREFIX_I2C_WRITE_NAME or \
+               prefix == constants.SEQ_PREFIX_I2C_WRITE_ADDR:
                 # params 딕셔너리의 모든 키를 순회하며 "VAL" 상수와 일치하는지 명시적으로 확인
                 # SequencePlayer._parse_sequence_item에서 key.strip()을 이미 수행했으므로,
                 # 여기서 params의 키는 이미 공백이 제거된 상태임.
@@ -92,11 +97,13 @@ class LoopDefinitionDialog(QDialog):
                     constants.SEQ_PARAM_KEY_TOLERANCE,
                     constants.SEQ_PARAM_KEY_TIMEOUT
                 ]
+                # params.keys()를 직접 순회하는 대신 possible_target_keys를 순회하며 params에 있는지 확인
                 for target_key in possible_target_keys:
-                    for key_in_params_dict in params.keys():
-                        if key_in_params_dict == target_key:
-                            loopable_numeric_params.append(target_key)
-                            break # 하나의 target_key에 대해 일치하는 것을 찾으면 다음 target_key로 넘어감
+                    if target_key in params: # params는 params_dict임
+                        loopable_numeric_params.append(target_key)
+                        # 발견해도 break하지 않고 모든 possible_target_keys를 확인하여 추가
+            
+            print(f"DEBUG_LoopDialog_Init: For original_idx={original_idx}, prefix='{prefix}', identified loopable_params: {loopable_numeric_params}")
 
             if loopable_numeric_params:
                 action_display_name = f"단계 {original_idx + 1}: {prefix}"
@@ -161,8 +168,14 @@ class LoopDefinitionDialog(QDialog):
         if not self.param_combo or not self.action_combo: return
 
         self.param_combo.clear()
+        current_action_text = self.action_combo.itemText(action_combo_idx) # Get text for logging
+        found_params_for_action = []
+
         if action_combo_idx >= 0 and action_combo_idx in self.action_param_map:
-            self.param_combo.addItems(self.action_param_map[action_combo_idx])
+            found_params_for_action = self.action_param_map[action_combo_idx]
+            self.param_combo.addItems(found_params_for_action)
+        
+        print(f"DEBUG_LoopDialog: Action selected: '{current_action_text}' (idx {action_combo_idx}). Found loopable params: {found_params_for_action}")
 
         # 파라미터 콤보가 비어있으면 OK 버튼 비활성화
         if self.button_box:

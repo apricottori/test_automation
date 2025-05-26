@@ -135,26 +135,60 @@ class SequencePlayer(QObject):
                     error_msg = "중첩 루프는 현재 지원되지 않습니다 (LOOP_START 발견)."
                 else:
                     try:
-                        loop_params_from_item = {
-                            'target_action_original_index': int(params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX]),
+                        # target_action_original_index from params is the index from the GUI list 
+                        # (before this LOOP_START was added by the GUI into the list subsequently passed to the player)
+                        target_action_gui_idx = int(params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX])
+                        
+                        # Player's current item_index is where LOOP_START is.
+                        # Actions *inside* this loop block, in player's list, start at current_item_index + 1
+                        loop_content_start_idx_in_player = current_item_index + 1
+                        loop_content_end_idx_in_player = -1 # Placeholder for last action in loop
+                        loop_marker_end_idx_in_player = -1   # Placeholder for LOOP_END marker itself
+
+                        for k_idx in range(loop_content_start_idx_in_player, len(self.sequence_items)):
+                            end_action_type_check, _ = self._parse_sequence_item(self.sequence_items[k_idx])
+                            if end_action_type_check == constants.SEQ_PREFIX_LOOP_END:
+                                loop_marker_end_idx_in_player = k_idx
+                                loop_content_end_idx_in_player = k_idx -1 # Last actual action is before LOOP_END
+                                break
+                        
+                        if loop_marker_end_idx_in_player == -1:
+                            raise ValueError("Matching LOOP_END not found for LOOP_START.")
+
+                        # Adjust GUI index to player's list index.
+                        # If LOOP_START was inserted at GUI index G_ins, an item at GUI index G_target (>= G_ins)
+                        # is now at player index G_target + 1.
+                        # current_item_index corresponds to the insertion point of this LOOP_START.
+                        target_action_player_idx = target_action_gui_idx + 1
+                        
+                        if not (loop_content_start_idx_in_player <= target_action_player_idx <= loop_content_end_idx_in_player):
+                            # Check if the content indices themselves are valid before forming the error message
+                            valid_content_range = loop_content_start_idx_in_player <= loop_content_end_idx_in_player
+                            error_detail_msg = (
+                                f"Loop target action (original GUI index {target_action_gui_idx + 1}, "
+                                f"now player index {target_action_player_idx + 1}) "
+                                f"is outside the detected loop block content in player (player steps "
+                                f"{loop_content_start_idx_in_player + 1} to {loop_content_end_idx_in_player + 1})."
+                            ) if valid_content_range else (
+                                f"Loop block content indices are invalid (start: {loop_content_start_idx_in_player+1}, "
+                                f"end: {loop_content_end_idx_in_player+1})."
+                            )
+                            raise ValueError(error_detail_msg)
+
+                        loop_params_to_stack = {
+                            'target_action_player_idx': target_action_player_idx,
                             'target_param_key': params[constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY],
                             'current_value': float(params[constants.SEQ_PARAM_KEY_LOOP_START_VALUE]),
                             'step_value': float(params[constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE]),
                             'end_value': float(params[constants.SEQ_PARAM_KEY_LOOP_END_VALUE]),
-                            'loop_block_start_item_index': current_item_index + 1, 
-                            'loop_block_end_item_index': -1 
+                            'loop_content_start_idx_in_player': loop_content_start_idx_in_player, # Index of first action in loop
+                            'loop_marker_end_idx_in_player': loop_marker_end_idx_in_player     # Index of LOOP_END marker
                         }
-                        for k_idx in range(current_item_index + 1, len(self.sequence_items)):
-                            end_action_type_check, _ = self._parse_sequence_item(self.sequence_items[k_idx])
-                            if end_action_type_check == constants.SEQ_PREFIX_LOOP_END:
-                                loop_params_from_item['loop_block_end_item_index'] = k_idx
-                                break
-                        if loop_params_from_item['loop_block_end_item_index'] == -1:
-                            raise ValueError("Matching LOOP_END not found for LOOP_START.")
-                        loop_stack.append(loop_params_from_item)
-                        self.log_message_signal.emit(f"  Loop Start: TargetParam='{loop_params_from_item['target_param_key']}' on Step {loop_params_from_item['target_action_original_index']+1}, Range=[{loop_params_from_item['current_value']:.4g} to {loop_params_from_item['end_value']:.4g} step {loop_params_from_item['step_value']:.4g}]")
+                        loop_stack.append(loop_params_to_stack)
+                        self.log_message_signal.emit(f"  Loop Start: TargetParam='{loop_params_to_stack['target_param_key']}' on player action index {target_action_player_idx+1}, Range=[{loop_params_to_stack['current_value']:.4g} to {loop_params_to_stack['end_value']:.4g} step {loop_params_to_stack['step_value']:.4g}]")
                         step_success = True
-                    except (KeyError, ValueError) as e: error_msg = f"루프 시작 파라미터 파싱 오류: {e}"
+                    except (KeyError, ValueError) as e: 
+                        error_msg = f"루프 시작 파라미터 파싱 또는 유효성 검사 오류: {e}"
                 
                 if error_msg: self.log_message_signal.emit(f"  Error: {error_msg}")
                 if not step_success and halt_on_error:
@@ -177,7 +211,9 @@ class SequencePlayer(QObject):
                     if loop_iteration_finished:
                         loop_stack.pop(); self.log_message_signal.emit(f"  Loop End (모든 반복 완료). {error_msg if error_msg else ''}")
                     else:
-                        current_item_index = current_loop['loop_block_start_item_index']; self.log_message_signal.emit(f"  Looping: Next value for '{current_loop['target_param_key']}' = {current_loop['current_value']:.4g}"); continue 
+                        # Jump back to the start of the loop block content
+                        current_item_index = current_loop['loop_content_start_idx_in_player']
+                        self.log_message_signal.emit(f"  Looping: Next value for '{current_loop['target_param_key']}' = {current_loop['current_value']:.4g}"); continue 
                 step_success = not bool(error_msg)
                 if error_msg: self.log_message_signal.emit(f"  Error: {error_msg}")
                 if not step_success and halt_on_error:
@@ -186,7 +222,7 @@ class SequencePlayer(QObject):
             
             if loop_stack: 
                 active_loop = loop_stack[-1]
-                if current_item_index == active_loop['target_action_original_index']:
+                if current_item_index == active_loop['target_action_player_idx']: # Use adjusted player index
                     target_key_in_action = active_loop['target_param_key']
                     if target_key_in_action in modified_params:
                         current_loop_val_num = active_loop['current_value']
