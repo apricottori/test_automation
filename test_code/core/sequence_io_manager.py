@@ -12,98 +12,129 @@ class SequenceIOManager:
 
     def __init__(self, sequences_dir: str):
         self.sequences_dir = sequences_dir
-
-    def save_sequence(self, sequence_name: str, sequence_lines: List[str], overwrite: bool = False) -> bool:
-        """
-        시퀀스 파일을 저장합니다. 디렉토리가 없으면 생성합니다.
-        Args:
-            sequence_name (str): 저장할 시퀀스 이름 (확장자 없이)
-            sequence_lines (List[str]): 시퀀스 항목 리스트
-            overwrite (bool): 파일이 이미 존재할 때 덮어쓸지 여부
-        Returns:
-            bool: 저장 성공 여부
-        """
-        try:
-            if not os.path.exists(self.sequences_dir):
+        if not os.path.exists(self.sequences_dir):
+            try:
                 os.makedirs(self.sequences_dir, exist_ok=True)
-                print(f"[SequenceIOManager] Created directory: {self.sequences_dir}")
-            filename = sequence_name
-            if not filename.endswith(constants.SEQUENCE_FILE_EXTENSION):
-                filename += constants.SEQUENCE_FILE_EXTENSION
-            filepath = os.path.join(self.sequences_dir, filename)
-            if os.path.exists(filepath) and not overwrite:
-                print(f"[SequenceIOManager] File already exists and overwrite is False: {filepath}")
+                print(f"[SequenceIOManager] Created sequences directory: {self.sequences_dir}")
+            except Exception as e:
+                # 디렉토리 생성 실패 시, 애플리케이션 레벨에서 처리하거나, 여기서 에러를 발생시켜야 할 수 있습니다.
+                # 여기서는 일단 경고만 출력하고, 실제 파일 작업 시 오류가 발생할 수 있음을 인지합니다.
+                print(f"[SequenceIOManager] CRITICAL: Failed to create sequences directory '{self.sequences_dir}': {e}")
+                # raise OSError(f"Failed to create sequences directory: {self.sequences_dir}") from e # 필요시 예외 발생
+
+    def save_sequence(self, sequence_name_no_ext: str, sequence_lines: List[str], overwrite: bool = False) -> bool:
+        """
+        시퀀스 파일을 JSON 형태로 저장합니다.
+        JSON 파일에는 시퀀스 이름, 저장 시각, 그리고 시퀀스 라인들이 포함됩니다.
+        
+        Args:
+            sequence_name_no_ext (str): 저장할 시퀀스의 순수 이름 (확장자 제외).
+            sequence_lines (List[str]): 시퀀스 라인 목록.
+            overwrite (bool): 동일한 이름의 파일이 있을 경우 덮어쓸지 여부.
+            
+        Returns:
+            bool: 저장 성공 여부.
+        """
+        if not sequence_name_no_ext or not sequence_name_no_ext.strip():
+            print(f"[SequenceIOManager] Error: Sequence name cannot be empty.")
+            return False
+        
+        # Ensure the sequences directory exists, try to create it if not (might be redundant if __init__ handles it well)
+        if not os.path.exists(self.sequences_dir):
+            try:
+                os.makedirs(self.sequences_dir, exist_ok=True)
+                print(f"[SequenceIOManager] Created directory during save: {self.sequences_dir}")
+            except Exception as e:
+                print(f"[SequenceIOManager] Error creating directory during save '{self.sequences_dir}': {e}")
                 return False
-            data = {
-                "sequence_lines": sequence_lines,
+                
+        filename_with_ext = sequence_name_no_ext + constants.SEQUENCE_FILE_EXTENSION
+        filepath = os.path.join(self.sequences_dir, filename_with_ext)
+        
+        if os.path.exists(filepath) and not overwrite:
+            print(f"[SequenceIOManager] File '{filepath}' already exists and overwrite is False.")
+            return False
+            
+        try:
+            sequence_data = {
+                "name": sequence_name_no_ext, # Store the pure name inside JSON
                 "saved_at": datetime.now().isoformat(),
+                "sequence_lines": sequence_lines
             }
+            
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            print(f"[SequenceIOManager] Sequence saved: {filepath}")
+                json.dump(sequence_data, f, indent=2, ensure_ascii=False)
+                
+            print(f"[SequenceIOManager] Sequence successfully saved to '{filepath}'")
             return True
+            
         except Exception as e:
-            print(f"[SequenceIOManager] Error saving sequence: {e}")
+            print(f"[SequenceIOManager] Error saving sequence '{sequence_name_no_ext}' to '{filepath}': {e}")
             return False
 
     @staticmethod
     def load_sequence(filepath: str) -> Optional[List[str]]:
         """
-        JSON 파일에서 시퀀스 아이템 리스트를 로드합니다.
-        파일 내 "sequence_lines" 키에 해당하는 리스트를 반환합니다.
-        Args:
-            filepath (str): 로드할 시퀀스 파일의 전체 경로.
-        Returns:
-            Optional[List[str]]: 로드된 시퀀스 아이템 리스트. 
-                                 파일이 없거나, JSON 파싱 실패, "sequence_lines" 키 부재 시 None 반환.
+        JSON 파일에서 시퀀스 아이템 리스트("sequence_lines")를 로드합니다.
         """
         if not os.path.exists(filepath):
-            print(f"[SequenceIOManager] Error: File not found: '{filepath}'")
+            print(f"[SequenceIOManager] Error loading: File not found '{filepath}'")
             return None
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            if "sequence_lines" in data:
-                print(f"[SequenceIOManager] Sequence loaded: {filepath}")
+            
+            if "sequence_lines" in data and isinstance(data["sequence_lines"], list):
+                print(f"[SequenceIOManager] Sequence lines loaded successfully from '{filepath}'")
                 return data["sequence_lines"]
-            elif "steps" in data:
-                print(f"[SequenceIOManager] Legacy sequence loaded: {filepath}")
+            elif "steps" in data and isinstance(data["steps"], list): # Legacy support
+                print(f"[SequenceIOManager] Legacy sequence (steps) loaded from '{filepath}'")
                 return data["steps"]
             else:
-                print(f"[SequenceIOManager] Error: No sequence_lines or steps key in file: {filepath}")
+                print(f"[SequenceIOManager] Error: '{filepath}' does not contain 'sequence_lines' or valid 'steps' list.")
                 return None
+        except json.JSONDecodeError as e:
+            print(f"[SequenceIOManager] Error decoding JSON from '{filepath}': {e}")
+            return None
+        except IOError as e:
+            print(f"[SequenceIOManager] IOError loading sequence from '{filepath}': {e}")
+            return None
         except Exception as e:
-            print(f"[SequenceIOManager] Error loading sequence: {e}")
+            print(f"[SequenceIOManager] Unexpected error loading sequence from '{filepath}': {e}")
             return None
 
-    @staticmethod
-    def get_saved_sequences(directory: str) -> List[Dict[str, str]]:
+    def get_saved_sequences(self) -> List[Dict[str, str]]: # Return type changed
         """
         지정된 디렉토리에서 모든 저장된 시퀀스 파일 정보를 읽어 리스트로 반환합니다.
-        각 정보는 {"name": "파일이름 (확장자 제외)", "path": "전체 파일 경로"} 형태의 딕셔너리입니다.
-
-        Args:
-            directory (str): 저장된 시퀀스 파일들이 있는 디렉토리 경로.
-
-        Returns:
-            List[Dict[str, str]]: 발견된 시퀀스 파일 정보 딕셔너리의 리스트.
+        각 정보는 {"display_name": "표시용_이름", "path": "전체_파일_경로"} 형태의 딕셔너리입니다.
+        표시용 이름은 JSON 내부의 "name" 필드를 우선 사용하고, 없으면 파일명에서 추출합니다.
         """
-        saved_sequences = []
-        if not os.path.isdir(directory):
-            print(f"Info: 저장된 시퀀스 디렉토리가 존재하지 않습니다: '{directory}'")
-            return saved_sequences
+        saved_sequences_info = []
+        if not os.path.isdir(self.sequences_dir):
+            print(f"[SequenceIOManager] Saved sequences directory not found: '{self.sequences_dir}'")
+            return saved_sequences_info
         
-        try:
-            for filename in os.listdir(directory):
-                if filename.endswith(constants.SEQUENCE_FILE_EXTENSION):
-                    name_without_extension = filename[:-len(constants.SEQUENCE_FILE_EXTENSION)]
-                    full_path = os.path.join(directory, filename)
-                    saved_sequences.append({"name": name_without_extension, "path": full_path})
-            # 이름순으로 정렬하여 반환
-            saved_sequences.sort(key=lambda x: x['name'].lower())
-        except Exception as e:
-            print(f"Error: 저장된 시퀀스 목록을 읽는 중 오류 발생 '{directory}': {e}")
-        return saved_sequences
+        print(f"[SequenceIOManager] Scanning for sequences in: {self.sequences_dir}")
+        for filename in os.listdir(self.sequences_dir):
+            if filename.endswith(constants.SEQUENCE_FILE_EXTENSION):
+                filepath = os.path.join(self.sequences_dir, filename)
+                display_name = filename[:-len(constants.SEQUENCE_FILE_EXTENSION)] # Default to filename
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if isinstance(data, dict) and "name" in data and isinstance(data["name"], str) and data["name"].strip():
+                        display_name = data["name"].strip()
+                        print(f"  Found sequence '{display_name}' (from JSON name) in '{filename}'")
+                    else:
+                        print(f"  Found sequence '{display_name}' (from filename) in '{filename}' - no valid 'name' field in JSON.")
+                except Exception as e:
+                    print(f"  Error reading or parsing JSON for '{filename}' to get display name: {e}. Using filename as display name.")
+                
+                saved_sequences_info.append({"display_name": display_name, "path": filepath})
+        
+        saved_sequences_info.sort(key=lambda x: x['display_name'].lower())
+        print(f"[SequenceIOManager] Found {len(saved_sequences_info)} sequences.")
+        return saved_sequences_info
 
     @staticmethod
     def delete_sequence(filepath: str) -> bool:
@@ -194,7 +225,7 @@ if __name__ == '__main__':
 
     # 2. 저장된 시퀀스 목록 조회 테스트
     print("\n--- 저장된 시퀀스 목록 조회 테스트 ---")
-    saved_list = io_manager.get_saved_sequences(test_dir)
+    saved_list = io_manager.get_saved_sequences()
     print(f"저장된 시퀀스: {saved_list}")
     assert len(saved_list) >= 2 # 위에서 2개 저장했으므로
 
@@ -215,7 +246,7 @@ if __name__ == '__main__':
     print("\n--- 시퀀스 이름 변경 테스트 ---")
     if saved_list:
         path_to_rename = saved_list[0]['path']
-        original_name = saved_list[0]['name']
+        original_name = saved_list[0]['display_name']
         new_name = original_name + "_Renamed"
         
         renamed_path = io_manager.rename_sequence(path_to_rename, new_name, test_dir)
@@ -225,8 +256,8 @@ if __name__ == '__main__':
             assert not os.path.exists(path_to_rename) # 이전 파일은 없어야 함
             
             # 변경된 이름으로 목록 다시 조회
-            updated_list = io_manager.get_saved_sequences(test_dir)
-            assert any(item['name'] == new_name for item in updated_list)
+            updated_list = io_manager.get_saved_sequences()
+            assert any(item['display_name'] == new_name for item in updated_list)
             
             # 테스트 편의를 위해 원래 이름으로 복원 (다음 테스트를 위해)
             # io_manager.rename_sequence(renamed_path, original_name, test_dir)
@@ -236,17 +267,17 @@ if __name__ == '__main__':
     # 5. 시퀀스 삭제 테스트
     print("\n--- 시퀀스 삭제 테스트 ---")
     # 삭제할 파일 경로를 다시 가져옴 (이름 변경 테스트에서 경로가 바뀔 수 있으므로)
-    current_saved_list = io_manager.get_saved_sequences(test_dir)
+    current_saved_list = io_manager.get_saved_sequences()
     if current_saved_list:
         path_to_delete = current_saved_list[0]['path']
-        name_to_delete = current_saved_list[0]['name']
+        name_to_delete = current_saved_list[0]['display_name']
         delete_success = io_manager.delete_sequence(path_to_delete)
         if delete_success:
             print(f"'{name_to_delete}' 삭제 성공.")
             assert not os.path.exists(path_to_delete)
             # 삭제 후 목록 다시 조회
-            final_list = io_manager.get_saved_sequences(test_dir)
-            assert not any(item['name'] == name_to_delete for item in final_list)
+            final_list = io_manager.get_saved_sequences()
+            assert not any(item['display_name'] == name_to_delete for item in final_list)
         else:
             print(f"'{name_to_delete}' 삭제 실패.")
 

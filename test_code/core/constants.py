@@ -71,6 +71,7 @@ DEFAULT_JSON_REGMAP_FILE_PATH: str = ""
 DEFAULT_REGA_FILE_PATH: str = "P24X_rega.txt"
 DEFAULT_CONFIG_FILE: str = "config.json"
 SAVED_SEQUENCES_DIR_NAME: str = "sequences"
+USER_SEQUENCES_DIR_NAME: str = "user_sequences"
 SEQUENCE_FILE_EXTENSION: str = ".seq.json"
 
 # --- Font Constants ---

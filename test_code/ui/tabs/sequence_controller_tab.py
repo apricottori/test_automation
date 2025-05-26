@@ -220,32 +220,24 @@ class SequenceControllerTab(QWidget):
         self.setEnabled(False) 
 
     def _setup_saved_sequences_directory(self) -> str:
-        app_name_for_folder = getattr(constants, 'APP_NAME_FOR_DIRS', 'TestAutomationApp') # 수정: APP_NAME_FOR_DIRS 사용
-        try:
-            docs_path = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
-            if not docs_path: 
-                docs_path = os.path.expanduser("~")
-            app_data_path = os.path.join(docs_path, app_name_for_folder)
-        except Exception: 
-            app_data_path = os.path.join(os.path.expanduser("~"), f".{app_name_for_folder}")
-
-        sequences_dir = os.path.join(app_data_path, constants.SAVED_SEQUENCES_DIR_NAME)
+        # CWD를 기준으로 USER_SEQUENCES_DIR_NAME 사용
+        # app_name_for_folder = getattr(constants, 'APP_NAME_FOR_DIRS', 'TestAutomationApp') # 이 줄은 더 이상 필요 없을 수 있음
+        sequences_base_dir = os.getcwd() # 현재 작업 디렉토리
+        sequences_dir = os.path.join(sequences_base_dir, constants.USER_SEQUENCES_DIR_NAME)
         
         try:
             os.makedirs(sequences_dir, exist_ok=True)
-            print(f"INFO_SCT: Saved sequences directory: {sequences_dir}")
+            print(f"INFO_SCT: User sequences directory: {sequences_dir}")
             return sequences_dir
         except OSError as e:
-            print(f"WARNING_SCT: Failed to create primary sequences directory '{sequences_dir}': {e}")
-            alt_dir = os.path.join(os.getcwd(), constants.SAVED_SEQUENCES_DIR_NAME) 
-            try:
-                os.makedirs(alt_dir, exist_ok=True)
-                QMessageBox.warning(self, "경로 오류", f"기본 시퀀스 저장 경로({sequences_dir}) 생성 실패: {e}\n대체 경로를 사용합니다: {alt_dir}")
-                return alt_dir
-            except OSError as e2:
-                final_dir = os.getcwd()
-                QMessageBox.critical(self, "치명적 경로 오류", f"모든 시퀀스 저장 경로 생성에 실패했습니다: {e2}\n현재 작업 디렉토리를 사용합니다: {final_dir}")
-                return final_dir
+            print(f"CRITICAL_SCT: Failed to create user sequences directory '{sequences_dir}': {e}")
+            # 폴더 생성 실패 시, CWD 자체를 반환하거나 사용자에게 알리고 종료하는 등의 처리가 필요할 수 있음
+            # 여기서는 일단 CWD를 반환하지만, 이는 바람직하지 않을 수 있음.
+            alt_dir = os.getcwd()
+            QMessageBox.critical(self, "치명적 경로 오류", 
+                                 f"시퀀스 저장 폴더 '{sequences_dir}' 생성에 실패했습니다: {e}\n"
+                                 f"현재 작업 디렉토리 '{alt_dir}'를 사용합니다 (권장되지 않음).")
+            return alt_dir
 
     def _setup_main_layout(self, target_layout: QVBoxLayout):
         if target_layout is None:
@@ -298,6 +290,7 @@ class SequenceControllerTab(QWidget):
             # Stretch before SavedSequencePanel and Play/Stop buttons
             left_panel_layout.addStretch(1)
 
+            print(f"DEBUG_SCT_LeftPanel: About to create SavedSequencePanel. self.sequence_io_manager is {self.sequence_io_manager} (type: {type(self.sequence_io_manager)}), self.saved_sequences_dir is {self.saved_sequences_dir}")
             self.saved_sequence_panel = SavedSequencePanel(self.sequence_io_manager, self.saved_sequences_dir, parent=left_panel_widget)
             if not self.saved_sequence_panel: raise RuntimeError("SavedSequencePanel creation failed.")
             left_panel_layout.addWidget(self.saved_sequence_panel)
@@ -563,9 +556,14 @@ class SequenceControllerTab(QWidget):
         if not current_items:
             QMessageBox.information(self, "시퀀스 저장", "저장할 아이템이 시퀀스 목록에 없습니다."); return
         
-        if self.saved_sequence_panel.save_sequence_to_file_requested_by_controller(current_items, requested_name_without_ext):
+        if self.sequence_io_manager.save_sequence(sequence_name_no_ext=requested_name_without_ext, 
+                                                 sequence_lines=current_items, 
+                                                 overwrite=True): # 덮어쓰기 허용 (필요시 로직 수정)
             QMessageBox.information(self, "저장 성공", f"시퀀스가 '{requested_name_without_ext}{constants.SEQUENCE_FILE_EXTENSION}' 이름으로 저장되었습니다.")
-
+            if self.saved_sequence_panel: # 패널이 있다면 목록 새로고침
+                self.saved_sequence_panel.load_saved_sequences()
+        else:
+            QMessageBox.warning(self, "저장 실패", f"시퀀스 '{requested_name_without_ext}' 저장에 실패했습니다.")
 
     @pyqtSlot()
     def remove_selected_item_with_warning(self):

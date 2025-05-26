@@ -27,58 +27,65 @@ class SavedSequencePanel(QWidget):
                  saved_sequences_dir: str,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._ui_setup_done = False
+
         self._io_manager = sequence_io_manager
+        print(f"DEBUG_SSP_Init: self._io_manager assigned: {self._io_manager} (type: {type(self._io_manager)}) from argument: {sequence_io_manager}")
         self._saved_sequences_dir = saved_sequences_dir
-        self.sequence_list_widget = None
-        self.parent_widget = parent # 부모 위젯 참조 저장
-        self.main_window_ref = None # Placeholder, can be set via a method if needed by this panel
-        self.load_button = None
-        self.save_as_button = None
-        self.rename_button = None
-        self.delete_button = None
+        print(f"DEBUG_SSP_Init: self._saved_sequences_dir assigned: {self._saved_sequences_dir}")
+        self.parent_widget = parent
+        self.main_window_ref = None
+        self._ui_setup_done = False # Initialize to False
+
+        # Declare UI members and initialize to None
+        self.sequence_list_widget: Optional[QListWidget] = None
+        self.load_button: Optional[QPushButton] = None
+        self.save_as_button: Optional[QPushButton] = None
+        self.rename_button: Optional[QPushButton] = None
+        self.delete_button: Optional[QPushButton] = None
         
         print(f"DEBUG_SSP: __init__ start, self._ui_setup_done = {self._ui_setup_done}")
-        self._setup_ui()
+        self._setup_ui() # This method should set self._ui_setup_done to True on success
+        
         print(f"DEBUG_SSP: __init__ after _setup_ui, self._ui_setup_done = {self._ui_setup_done}, self.sequence_list_widget is {self.sequence_list_widget}")
-        if self._ui_setup_done and self._io_manager is not None:
-            self.load_saved_sequences()
-        elif not self._ui_setup_done:
-            print("Error (SavedSequencePanel): UI setup was not successful. Cannot load sequences.")
-            if hasattr(self, 'sequence_list_widget') and self.sequence_list_widget:
-                self.sequence_list_widget.setEnabled(False)
-            # Disable buttons as well
-            if hasattr(self, 'load_button') and self.load_button: self.load_button.setEnabled(False)
-            if hasattr(self, 'save_as_button') and self.save_as_button: self.save_as_button.setEnabled(False)
-            if hasattr(self, 'rename_button') and self.rename_button: self.rename_button.setEnabled(False)
-            if hasattr(self, 'delete_button') and self.delete_button: self.delete_button.setEnabled(False)
+        
+        if self._ui_setup_done:
+            self._connect_signals() # Connect signals only if UI setup was successful
+            if self._io_manager and self._saved_sequences_dir:
+                print("DEBUG_SSP: __init__ - UI setup done, IO manager and dir exist. Calling load_saved_sequences.")
+                self.load_saved_sequences()
+            else:
+                error_parts = []
+                if not self._io_manager: error_parts.append("IO manager not initialized")
+                if not self._saved_sequences_dir: error_parts.append("Saved sequences directory not set")
+                print(f"Error (SavedSequencePanel): Cannot load sequences after UI setup. Reason(s): {', '.join(error_parts)}.")
+                if self.sequence_list_widget: self.sequence_list_widget.setEnabled(False)
+                # Disable buttons as well if critical components are missing
+                if self.load_button: self.load_button.setEnabled(False)
+                if self.save_as_button: self.save_as_button.setEnabled(False)
+                if self.rename_button: self.rename_button.setEnabled(False)
+                if self.delete_button: self.delete_button.setEnabled(False)
         else:
-            # Build a more informative error message
-            error_parts = []
-            if not self._io_manager: error_parts.append("IO manager not initialized")
-            if not self._saved_sequences_dir: error_parts.append("Saved sequences directory not set")
-            # self._ui_setup_done would be false here too, but covered by elif
-            print(f"Error (SavedSequencePanel): Cannot load sequences. Reason(s): {', '.join(error_parts)}.")
-            if hasattr(self, 'sequence_list_widget') and self.sequence_list_widget:
-                self.sequence_list_widget.setEnabled(False)
-            if hasattr(self, 'load_button') and self.load_button: self.load_button.setEnabled(False)
-            if hasattr(self, 'save_as_button') and self.save_as_button: self.save_as_button.setEnabled(False)
-            if hasattr(self, 'rename_button') and self.rename_button: self.rename_button.setEnabled(False)
-            if hasattr(self, 'delete_button') and self.delete_button: self.delete_button.setEnabled(False)
+            # UI setup failed, already handled by _setup_ui printing an error
+            # and potentially by the caller (SequenceControllerTab) if it checks _ui_setup_done
+            print("Error (SavedSequencePanel): UI setup was not successful in __init__. Panel may be unusable.")
+            # Consider further error state UI if _setup_ui doesn't sufficiently handle it.
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0,0,0,0) # 패널 자체의 여백은 0
 
-        # Initialize _ui_setup_done to False at the beginning of setup
-        self._ui_setup_done = False
+        # Reset _ui_setup_done at the beginning of setup, in case of re-entry or prior failure
+        self._ui_setup_done = False 
         
         try:
             group_box = QGroupBox(constants.SAVED_SEQUENCES_GROUP_TITLE)
             group_layout = QVBoxLayout(group_box) # 그룹박스 내부 레이아웃
 
-            # Create sequence_list_widget before setting _ui_setup_done
+            # Create sequence_list_widget and assign to self
             self.sequence_list_widget = QListWidget()
+            if self.sequence_list_widget is None: # Should not happen if QListWidget() constructor succeeds
+                raise RuntimeError("Failed to create QListWidget for sequences.")
+            
             self.sequence_list_widget.setAlternatingRowColors(True)
             self.sequence_list_widget.itemDoubleClicked.connect(self._handle_load_button_clicked)
             group_layout.addWidget(self.sequence_list_widget)
@@ -123,22 +130,23 @@ class SavedSequencePanel(QWidget):
             
             main_layout.addWidget(group_box)
             
-            print(f"DEBUG_SSP: _setup_ui almost done. self.sequence_list_widget is {self.sequence_list_widget}")
-            # Mark UI setup as complete
+            # All UI elements have been created successfully
             self._ui_setup_done = True
-            print(f"DEBUG_SSP: _setup_ui completed. self._ui_setup_done = {self._ui_setup_done}")
+            print(f"DEBUG_SSP: _setup_ui completed successfully. self.sequence_list_widget is {self.sequence_list_widget}, _ui_setup_done={self._ui_setup_done}")
         except Exception as e:
-            self._ui_setup_done = False
+            self._ui_setup_done = False # Ensure flag is false on any exception during setup
             print(f"ERROR_SSP: _setup_ui failed with error: {e}")
             import traceback
             traceback.print_exc()
+            # Potentially add a placeholder error UI to the panel if setup fails catastrophically
+            # For now, relying on the print and the flag for the caller to handle.
         
-        # Verify UI elements exist before continuing
-        if not self.sequence_list_widget:
-            print("ERROR_SSP: sequence_list_widget was not created properly during _setup_ui")
-            self._ui_setup_done = False
-        
-        print(f"DEBUG_SSP: _setup_ui finished. self._ui_setup_done={self._ui_setup_done}, self.sequence_list_widget is {'set' if self.sequence_list_widget else 'None'}")
+        # This final check after try-except might be redundant if _ui_setup_done is correctly managed within, but can be a safeguard.
+        if not self._ui_setup_done or self.sequence_list_widget is None:
+            print(f"ERROR_SSP: Post _setup_ui check: _ui_setup_done={self._ui_setup_done}, sequence_list_widget is {self.sequence_list_widget}. Marking as failed.")
+            self._ui_setup_done = False # Explicitly mark as failed if checks don't pass
+        else:
+            print(f"DEBUG_SSP: _setup_ui finished. self.sequence_list_widget is valid, _ui_setup_done={self._ui_setup_done}")
 
     def _connect_signals(self):
         if self.load_button:
@@ -152,14 +160,22 @@ class SavedSequencePanel(QWidget):
 
     def load_saved_sequences(self):
         """지정된 디렉토리에서 저장된 시퀀스 목록을 불러와 UI에 표시합니다."""
-        if not self.sequence_list_widget or not self._io_manager:
-            print("Error (SavedSequencePanel): UI or IO manager not initialized for loading sequences.")
+        # 명시적으로 None인지 확인하고, 각 변수 상태 로깅
+        ssp_list_widget_is_none = self.sequence_list_widget is None
+        ssp_io_manager_is_none = self._io_manager is None
+        print(f"DEBUG_SSP_LoadSaved: self.sequence_list_widget is None -> {ssp_list_widget_is_none} (Widget: {self.sequence_list_widget})")
+        print(f"DEBUG_SSP_LoadSaved: self._io_manager is None -> {ssp_io_manager_is_none} (IOManager: {self._io_manager})")
+
+        if ssp_list_widget_is_none or ssp_io_manager_is_none:
+            print(f"Error (SavedSequencePanel): sequence_list_widget (None: {ssp_list_widget_is_none}) or _io_manager (None: {ssp_io_manager_is_none}). Cannot load sequences.")
             return
             
         self.sequence_list_widget.clear()
-        sequences = self._io_manager.get_saved_sequences(self._saved_sequences_dir)
+        # SequenceIOManager.get_saved_sequences는 이제 인자를 받지 않고 내부의 self.sequences_dir를 사용합니다.
+        sequences = self._io_manager.get_saved_sequences()
         for seq_info in sequences:
-            item = QListWidgetItem(seq_info["name"])
+            # QListWidgetItem 생성 시 표시될 이름은 seq_info["display_name"]을 사용합니다.
+            item = QListWidgetItem(seq_info["display_name"])
             item.setData(Qt.UserRole, seq_info["path"]) # 파일 경로를 UserRole 데이터로 저장
             self.sequence_list_widget.addItem(item)
         print(f"SavedSequencePanel: Loaded {len(sequences)} saved sequences from '{self._saved_sequences_dir}'.")
@@ -191,10 +207,12 @@ class SavedSequencePanel(QWidget):
                                             constants.SEQUENCE_NAME_INPUT_DIALOG_LABEL)
         if ok and seq_name:
             # 파일명으로 사용하기 안전한 문자만 허용 (공백, 특수문자 등 제거 또는 변경)
+            # 여기서 생성된 safe_seq_name이 확장자 없는 순수 이름이 됩니다.
             safe_seq_name = "".join(c if c.isalnum() or c in ['_','-'] else '_' for c in seq_name).strip('_')
             if not safe_seq_name: # 모든 문자가 걸러져 이름이 비게 된 경우
                 QMessageBox.warning(self, "입력 오류", "유효한 시퀀스 이름이 필요합니다 (영문, 숫자, 밑줄, 하이픈만 사용 가능).")
                 return
+            # save_current_sequence_as_requested 시그널에 확장자 없는 순수 이름을 전달합니다.
             self.save_current_sequence_as_requested.emit(safe_seq_name)
         elif ok and not seq_name: # OK를 눌렀으나 이름을 입력하지 않은 경우
              QMessageBox.warning(self, "입력 오류", "시퀀스 이름은 비워둘 수 없습니다.")
@@ -248,24 +266,26 @@ class SavedSequencePanel(QWidget):
 
     def save_sequence_to_file_requested_by_controller(self, items_to_save: List[str], filename_without_ext: str) -> bool:
         """SequenceControllerTab으로부터 현재 시퀀스 저장 요청을 받아 처리합니다."""
-        if not self._io_manager: return False
+        if not self._io_manager: 
+            print("ERROR_SSP: IO Manager not available in save_sequence_to_file_requested_by_controller")
+            return False
         
-        # 파일명 유효성 검사는 _handle_save_as_button_clicked에서 이미 수행된 것으로 가정
-        # 여기서는 전달받은 filename_without_ext를 그대로 사용
-        filepath = os.path.join(self._saved_sequences_dir, filename_without_ext + constants.SEQUENCE_FILE_EXTENSION)
-        
-        if os.path.exists(filepath):
-            reply = QMessageBox.question(self, "덮어쓰기 확인", 
-                                         f"파일 '{filename_without_ext}{constants.SEQUENCE_FILE_EXTENSION}'이(가) 이미 존재합니다. 덮어쓰시겠습니까?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No: 
-                return False # 덮어쓰기 거부
-
-        if self._io_manager.save_sequence(filepath, items_to_save):
-            print(f"Info: Sequence saved to '{filepath}' by controller request.")
+        # SequenceIOManager.save_sequence는 이제 첫 번째 인자로 확장자 없는 순수 이름을 기대합니다.
+        # overwrite 로직은 SequenceIOManager.save_sequence 내부에서 처리될 수도 있고,
+        # 여기서 사용자에게 물어본 후 overwrite=True/False를 결정하여 전달할 수도 있습니다.
+        # 현재 SequenceIOManager.save_sequence는 overwrite 인자를 받으므로, 여기서 True로 설정하거나, 
+        # 다시 사용자에게 확인하는 로직을 추가할 수 있습니다. 여기서는 True로 가정합니다.
+        if self._io_manager.save_sequence(sequence_name_no_ext=filename_without_ext, 
+                                         sequence_lines=items_to_save, 
+                                         overwrite=True): # 덮어쓰기를 기본으로 하거나, 사용자 확인 필요
+            print(f"Info_SSP: Sequence '{filename_without_ext}' saved by controller request.")
             self.load_saved_sequences() # 저장 후 목록 새로고침
             return True
-        return False
+        else:
+            print(f"Error_SSP: Failed to save sequence '{filename_without_ext}' by controller request.")
+            # 필요시 사용자에게 오류 메시지 표시
+            # QMessageBox.warning(self, "저장 실패", f"시퀀스 '{filename_without_ext}' 저장에 실패했습니다.")
+            return False
 
     def set_main_window_ref(self, main_window_ref: Optional[Any]): # 'RegMapWindow'
         pass
