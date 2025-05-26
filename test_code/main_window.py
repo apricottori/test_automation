@@ -459,8 +459,10 @@ class RegMapWindow(QMainWindow):
             print(error_msg)
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Tab Creation Error", f"{error_msg}\n\nThe 'Test Sequence' tab could not be created.")
-            # Depending on severity, you might want to sys.exit(1) here or allow the app to continue without this tab.
+            QMessageBox.warning(self, "Tab Initialization Warning",
+                                 f"The '{constants.TAB_SEQUENCE_CONTROLLER_TITLE}' tab could not be initialized due to an error:\n{e_seq_tab}\n\n"
+                                 "This tab will be unavailable. You can continue using other features of the application.")
+            # 애플리케이션을 종료하지 않고 계속 실행하도록 함.
 
         if self.tab_sequence_controller_widget:
             self.tab_sequence_controller_widget.new_measurement_signal.connect(self._handle_new_measurement_from_sequence)
@@ -470,9 +472,14 @@ class RegMapWindow(QMainWindow):
                 self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
         else:
             print("ERROR: SequenceControllerTab widget is None after instantiation attempt. Tab will not be added.")
-            # Optionally, add a disabled placeholder tab or a message
-            # self.tabs.addTab(QWidget(), f"{constants.TAB_SEQUENCE_CONTROLLER_TITLE} (Error)")
-            # self.tabs.setTabEnabled(self.tabs.count() -1, False)
+            # 비활성화된 플레이스홀더 탭을 추가하여 사용자에게 시각적으로 알림
+            placeholder_tab = QWidget()
+            placeholder_layout = QVBoxLayout(placeholder_tab)
+            error_label = QLabel(f"'{constants.TAB_SEQUENCE_CONTROLLER_TITLE}' tab failed to load.\nPlease check logs for details.")
+            error_label.setAlignment(Qt.AlignCenter) # 텍스트 중앙 정렬
+            placeholder_layout.addWidget(error_label)
+            self.tabs.addTab(placeholder_tab, f"{constants.TAB_SEQUENCE_CONTROLLER_TITLE} (Error)")
+            self.tabs.setTabEnabled(self.tabs.count() - 1, False) # 플레이스홀더 탭 비활성화
 
         # Results Viewer Tab
         self.tab_results_viewer_widget = ResultsViewerTab(parent=self)

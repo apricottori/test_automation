@@ -6,6 +6,7 @@
     "sourcemeter_serial": "write gpib serial number",
     "chamber_use": false,
     "chamber_serial": "write gpib serial number",
+    "last_json_path": "/Users/hlee2/Documents/Henry_Mac/Python/anto/test_automation/P24X_regmap.json",
     "excel_export_sheets_config": [
         {
             "sheet_name": "AllData",
