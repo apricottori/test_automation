@@ -168,7 +168,6 @@ class GPIBDevice:
     def __init__(self, serial_number_str: str, device_name: str, device_class_ref: Any):
         self.serial_number = serial_number_str 
         self.device_name = device_name
-        # 타입 힌트를 문자열 리터럴 또는 TYPE_CHECKING 블록 내부의 타입으로 변경
         self.instrument: Optional[Any] = None # Any는 유지하거나, 더 구체적인 기본 클래스 타입으로 변경 가능
         self.is_connected: bool = False
         self.device_class_ref = device_class_ref # 실제 런타임 클래스 참조
@@ -177,28 +176,26 @@ class GPIBDevice:
         self._cached_set_current: Optional[float] = None
         self._cached_target_temperature: Optional[float] = None
 
-        # device_class_ref가 None일 수 있으므로, 런타임 클래스 변수 사용
         actual_device_class = None
         if device_name == "Multimeter (Agilent34401A)": actual_device_class = Agilent34401A_런타임
         elif device_name == "Sourcemeter (Keithley2401)": actual_device_class = KEITHLEY2401_런타임
         elif device_name == "Chamber (SU241)": actual_device_class = raon_su241_런타임.SU241 if raon_su241_런타임 else None
-        else: actual_device_class = self.device_class_ref # 일반적인 경우
+        else: actual_device_class = self.device_class_ref
 
         if actual_device_class is None:
             print(f"Error: {self.device_name}의 device class 로드 실패. 장치를 초기화할 수 없습니다.")
             return
 
         is_chamber = "Chamber" in self.device_name 
-        if not serial_number_str and not is_chamber:
-            print(f"Warning: {self.device_name}의 시리얼 번호/주소가 제공되지 않았습니다. 장치를 초기화할 수 없습니다.")
-            return
-
         try:
-            if serial_number_str:
+            if device_name in ["Multimeter (Agilent34401A)", "Sourcemeter (Keithley2401)"]:
+                self.instrument = actual_device_class() # No serial_number_str here
+            elif serial_number_str and not is_chamber:
                 self.instrument = actual_device_class(serial_number_str)
-            elif is_chamber: 
-                 self.instrument = actual_device_class()
+            elif is_chamber:
+                self.instrument = actual_device_class()
             else:
+                print(f"Error: Insufficient information to initialize {self.device_name}.")
                 return 
 
             if self.instrument and hasattr(self.instrument, 'set_verbose'):
@@ -210,7 +207,7 @@ class GPIBDevice:
         except Exception as e:
             print(f"Error: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'}) 인스턴스 생성 중 오류: {e}")
             self.instrument = None
-    # ... (GPIBDevice의 나머지 메소드들은 이전과 동일하게 유지) ...
+
     def connect(self) -> bool:
         if not self.instrument:
             print(f"Error: {self.device_name} 인스턴스가 없습니다. 연결할 수 없습니다.")
@@ -219,7 +216,12 @@ class GPIBDevice:
             print(f"Info: {self.device_name}이(가) 이미 연결되어 있습니다.")
             return True
         try:
-            self.instrument.open()
+            # For instruments initialized without address, pass it to open/connect
+            if self.device_name in ["Multimeter (Agilent34401A)", "Sourcemeter (Keithley2401)"] and self.serial_number:
+                self.instrument.open(self.serial_number) # open() takes the address
+            else:
+                self.instrument.open() # For Chamber or others not needing address at open
+
             self.is_connected = True
             print(f"Info: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'})에 성공적으로 연결되었습니다.")
             return True

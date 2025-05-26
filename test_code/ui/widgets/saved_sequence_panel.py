@@ -27,19 +27,21 @@ class SavedSequencePanel(QWidget):
                  saved_sequences_dir: str,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
-
-        # Assign sequence_io_manager to self.io_manager first
-        self.io_manager = sequence_io_manager
-        self.saved_sequences_dir = saved_sequences_dir
+        self._ui_setup_done = False
+        self._io_manager = sequence_io_manager
+        self._saved_sequences_dir = saved_sequences_dir
+        self.sequence_list_widget = None
         self.parent_widget = parent # 부모 위젯 참조 저장
         self.main_window_ref = None # Placeholder, can be set via a method if needed by this panel
-        self._ui_setup_done = False # Initialize before _setup_ui is called
-
-        self._setup_ui() # This will set self._ui_setup_done to True if successful
-        self._connect_signals() # 시그널 연결
-
-        # Now that self.io_manager and self._ui_setup_done are initialized, load sequences
-        if self.io_manager and self.saved_sequences_dir and self._ui_setup_done:
+        self.load_button = None
+        self.save_as_button = None
+        self.rename_button = None
+        self.delete_button = None
+        
+        print(f"DEBUG_SSP: __init__ start, self._ui_setup_done = {self._ui_setup_done}")
+        self._setup_ui()
+        print(f"DEBUG_SSP: __init__ after _setup_ui, self._ui_setup_done = {self._ui_setup_done}, self.sequence_list_widget is {self.sequence_list_widget}")
+        if self._ui_setup_done and self._io_manager is not None:
             self.load_saved_sequences()
         elif not self._ui_setup_done:
             print("Error (SavedSequencePanel): UI setup was not successful. Cannot load sequences.")
@@ -53,8 +55,8 @@ class SavedSequencePanel(QWidget):
         else:
             # Build a more informative error message
             error_parts = []
-            if not self.io_manager: error_parts.append("IO manager not initialized")
-            if not self.saved_sequences_dir: error_parts.append("Saved sequences directory not set")
+            if not self._io_manager: error_parts.append("IO manager not initialized")
+            if not self._saved_sequences_dir: error_parts.append("Saved sequences directory not set")
             # self._ui_setup_done would be false here too, but covered by elif
             print(f"Error (SavedSequencePanel): Cannot load sequences. Reason(s): {', '.join(error_parts)}.")
             if hasattr(self, 'sequence_list_widget') and self.sequence_list_widget:
@@ -64,66 +66,79 @@ class SavedSequencePanel(QWidget):
             if hasattr(self, 'rename_button') and self.rename_button: self.rename_button.setEnabled(False)
             if hasattr(self, 'delete_button') and self.delete_button: self.delete_button.setEnabled(False)
 
-        # UI 멤버 변수 선언
-        self.sequence_list_widget: Optional[QListWidget] = None
-        self.load_button: Optional[QPushButton] = None
-        self.save_as_button: Optional[QPushButton] = None
-        self.rename_button: Optional[QPushButton] = None
-        self.delete_button: Optional[QPushButton] = None
-
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0,0,0,0) # 패널 자체의 여백은 0
 
-        group_box = QGroupBox(constants.SAVED_SEQUENCES_GROUP_TITLE)
-        group_layout = QVBoxLayout(group_box) # 그룹박스 내부 레이아웃
-
-        self.sequence_list_widget = QListWidget()
-        self.sequence_list_widget.setAlternatingRowColors(True)
-        # 더블 클릭으로 로드 기능
-        self.sequence_list_widget.itemDoubleClicked.connect(self._handle_load_button_clicked)
-        group_layout.addWidget(self.sequence_list_widget)
-
-        # 버튼들을 두 줄로 배치 (기존과 동일)
-        buttons_layout1 = QHBoxLayout()
-        self.load_button = QPushButton(constants.LOAD_SEQUENCE_BUTTON_TEXT)
-        try:
-            app_instance = QApplication.instance()
-            if app_instance: self.load_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogOpenButton))
-        except Exception as e:
-            print(f"Warning (SavedSequencePanel): Could not set icon for load_button: {e}")
-            
-        self.save_as_button = QPushButton(constants.SAVE_SEQUENCE_AS_BUTTON_TEXT)
-        try:
-            app_instance = QApplication.instance()
-            if app_instance: self.save_as_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogSaveButton))
-        except Exception as e:
-            print(f"Warning (SavedSequencePanel): Could not set icon for save_as_button: {e}")
+        # Initialize _ui_setup_done to False at the beginning of setup
+        self._ui_setup_done = False
         
-        buttons_layout1.addWidget(self.load_button)
-        buttons_layout1.addWidget(self.save_as_button)
-        group_layout.addLayout(buttons_layout1)
-
-        buttons_layout2 = QHBoxLayout()
-        self.rename_button = QPushButton(constants.RENAME_SEQUENCE_BUTTON_TEXT)
-        try: 
-            app_instance = QApplication.instance()
-            if app_instance: self.rename_button.setIcon(app_instance.style().standardIcon(QStyle.SP_FileLinkIcon)) # 적절한 아이콘 선택
-        except Exception as e:
-            print(f"Warning (SavedSequencePanel): Could not set icon for rename_button: {e}")
-            
-        self.delete_button = QPushButton(constants.DELETE_SEQUENCE_BUTTON_TEXT)
         try:
-            app_instance = QApplication.instance()
-            if app_instance: self.delete_button.setIcon(app_instance.style().standardIcon(QStyle.SP_TrashIcon))
-        except Exception as e:
-            print(f"Warning (SavedSequencePanel): Could not set icon for delete_button: {e}")
+            group_box = QGroupBox(constants.SAVED_SEQUENCES_GROUP_TITLE)
+            group_layout = QVBoxLayout(group_box) # 그룹박스 내부 레이아웃
 
-        buttons_layout2.addWidget(self.rename_button)
-        buttons_layout2.addWidget(self.delete_button)
-        group_layout.addLayout(buttons_layout2)
+            # Create sequence_list_widget before setting _ui_setup_done
+            self.sequence_list_widget = QListWidget()
+            self.sequence_list_widget.setAlternatingRowColors(True)
+            self.sequence_list_widget.itemDoubleClicked.connect(self._handle_load_button_clicked)
+            group_layout.addWidget(self.sequence_list_widget)
+
+            buttons_layout1 = QHBoxLayout()
+            self.load_button = QPushButton(constants.LOAD_SEQUENCE_BUTTON_TEXT)
+            try:
+                app_instance = QApplication.instance()
+                if app_instance: self.load_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogOpenButton))
+            except Exception as e:
+                print(f"Warning (SavedSequencePanel): Could not set icon for load_button: {e}")
+                
+            self.save_as_button = QPushButton(constants.SAVE_SEQUENCE_AS_BUTTON_TEXT)
+            try:
+                app_instance = QApplication.instance()
+                if app_instance: self.save_as_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogSaveButton))
+            except Exception as e:
+                print(f"Warning (SavedSequencePanel): Could not set icon for save_as_button: {e}")
+            
+            buttons_layout1.addWidget(self.load_button)
+            buttons_layout1.addWidget(self.save_as_button)
+            group_layout.addLayout(buttons_layout1)
+            
+            buttons_layout2 = QHBoxLayout()
+            self.rename_button = QPushButton(constants.RENAME_SEQUENCE_BUTTON_TEXT)
+            try:
+                app_instance = QApplication.instance()
+                if app_instance: self.rename_button.setIcon(app_instance.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+            except Exception as e:
+                print(f"Warning (SavedSequencePanel): Could not set icon for rename_button: {e}")
+                
+            self.delete_button = QPushButton(constants.DELETE_SEQUENCE_BUTTON_TEXT)
+            try:
+                app_instance = QApplication.instance()
+                if app_instance: self.delete_button.setIcon(app_instance.style().standardIcon(QStyle.SP_TrashIcon))
+            except Exception as e:
+                print(f"Warning (SavedSequencePanel): Could not set icon for delete_button: {e}")
+            
+            buttons_layout2.addWidget(self.rename_button)
+            buttons_layout2.addWidget(self.delete_button)
+            group_layout.addLayout(buttons_layout2)
+            
+            main_layout.addWidget(group_box)
+            
+            print(f"DEBUG_SSP: _setup_ui almost done. self.sequence_list_widget is {self.sequence_list_widget}")
+            # Mark UI setup as complete
+            self._ui_setup_done = True
+            print(f"DEBUG_SSP: _setup_ui completed. self._ui_setup_done = {self._ui_setup_done}")
+        except Exception as e:
+            self._ui_setup_done = False
+            print(f"ERROR_SSP: _setup_ui failed with error: {e}")
+            import traceback
+            traceback.print_exc()
         
-        main_layout.addWidget(group_box)
+        # Verify UI elements exist before continuing
+        if not self.sequence_list_widget:
+            print("ERROR_SSP: sequence_list_widget was not created properly during _setup_ui")
+            self._ui_setup_done = False
+        
+        print(f"DEBUG_SSP: _setup_ui finished. self._ui_setup_done={self._ui_setup_done}, self.sequence_list_widget is {'set' if self.sequence_list_widget else 'None'}")
 
     def _connect_signals(self):
         if self.load_button:
@@ -137,20 +152,20 @@ class SavedSequencePanel(QWidget):
 
     def load_saved_sequences(self):
         """지정된 디렉토리에서 저장된 시퀀스 목록을 불러와 UI에 표시합니다."""
-        if not self.sequence_list_widget or not self.io_manager:
+        if not self.sequence_list_widget or not self._io_manager:
             print("Error (SavedSequencePanel): UI or IO manager not initialized for loading sequences.")
             return
             
         self.sequence_list_widget.clear()
-        sequences = self.io_manager.get_saved_sequences(self.saved_sequences_dir)
+        sequences = self._io_manager.get_saved_sequences(self._saved_sequences_dir)
         for seq_info in sequences:
             item = QListWidgetItem(seq_info["name"])
             item.setData(Qt.UserRole, seq_info["path"]) # 파일 경로를 UserRole 데이터로 저장
             self.sequence_list_widget.addItem(item)
-        print(f"SavedSequencePanel: Loaded {len(sequences)} saved sequences from '{self.saved_sequences_dir}'.")
+        print(f"SavedSequencePanel: Loaded {len(sequences)} saved sequences from '{self._saved_sequences_dir}'.")
 
     def _handle_load_button_clicked(self):
-        if not self.sequence_list_widget or not self.io_manager: return
+        if not self.sequence_list_widget or not self._io_manager: return
         
         selected_item = self.sequence_list_widget.currentItem()
         if not selected_item:
@@ -163,7 +178,7 @@ class SavedSequencePanel(QWidget):
             self.load_saved_sequences() # 파일이 없으면 목록을 새로고침
             return
             
-        loaded_items = self.io_manager.load_sequence(filepath)
+        loaded_items = self._io_manager.load_sequence(filepath)
         if loaded_items is not None:
             self.load_sequence_to_editor_requested.emit(loaded_items)
         else:
@@ -185,7 +200,7 @@ class SavedSequencePanel(QWidget):
              QMessageBox.warning(self, "입력 오류", "시퀀스 이름은 비워둘 수 없습니다.")
 
     def _handle_rename_button_clicked(self):
-        if not self.sequence_list_widget or not self.io_manager: return
+        if not self.sequence_list_widget or not self._io_manager: return
         selected_item = self.sequence_list_widget.currentItem()
         if not selected_item:
             QMessageBox.information(self, "이름 변경", "이름을 변경할 시퀀스를 선택하세요.")
@@ -202,7 +217,7 @@ class SavedSequencePanel(QWidget):
             if not safe_new_name:
                 QMessageBox.warning(self, "입력 오류", "유효한 새 시퀀스 이름이 필요합니다."); return
 
-            new_filepath = self.io_manager.rename_sequence(old_filepath, safe_new_name, self.saved_sequences_dir)
+            new_filepath = self._io_manager.rename_sequence(old_filepath, safe_new_name, self._saved_sequences_dir)
             if new_filepath:
                 QMessageBox.information(self, "이름 변경 성공", f"시퀀스 '{old_name}'의 이름이 '{safe_new_name}'(으)로 변경되었습니다.")
                 self.load_saved_sequences() # 목록 새로고침
@@ -213,7 +228,7 @@ class SavedSequencePanel(QWidget):
             pass
 
     def _handle_delete_button_clicked(self):
-        if not self.sequence_list_widget or not self.io_manager: return
+        if not self.sequence_list_widget or not self._io_manager: return
         selected_item = self.sequence_list_widget.currentItem()
         if not selected_item:
             QMessageBox.information(self, "시퀀스 삭제", "삭제할 시퀀스를 선택하세요.")
@@ -225,7 +240,7 @@ class SavedSequencePanel(QWidget):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             filepath = selected_item.data(Qt.UserRole)
-            if self.io_manager.delete_sequence(filepath):
+            if self._io_manager.delete_sequence(filepath):
                 QMessageBox.information(self, "삭제 성공", f"시퀀스 '{seq_name_to_delete}'이(가) 삭제되었습니다.")
                 self.load_saved_sequences() # 목록 새로고침
             else:
@@ -233,11 +248,11 @@ class SavedSequencePanel(QWidget):
 
     def save_sequence_to_file_requested_by_controller(self, items_to_save: List[str], filename_without_ext: str) -> bool:
         """SequenceControllerTab으로부터 현재 시퀀스 저장 요청을 받아 처리합니다."""
-        if not self.io_manager: return False
+        if not self._io_manager: return False
         
         # 파일명 유효성 검사는 _handle_save_as_button_clicked에서 이미 수행된 것으로 가정
         # 여기서는 전달받은 filename_without_ext를 그대로 사용
-        filepath = os.path.join(self.saved_sequences_dir, filename_without_ext + constants.SEQUENCE_FILE_EXTENSION)
+        filepath = os.path.join(self._saved_sequences_dir, filename_without_ext + constants.SEQUENCE_FILE_EXTENSION)
         
         if os.path.exists(filepath):
             reply = QMessageBox.question(self, "덮어쓰기 확인", 
@@ -246,7 +261,7 @@ class SavedSequencePanel(QWidget):
             if reply == QMessageBox.No: 
                 return False # 덮어쓰기 거부
 
-        if self.io_manager.save_sequence(filepath, items_to_save):
+        if self._io_manager.save_sequence(filepath, items_to_save):
             print(f"Info: Sequence saved to '{filepath}' by controller request.")
             self.load_saved_sequences() # 저장 후 목록 새로고침
             return True

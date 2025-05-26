@@ -274,9 +274,27 @@ class RegMapWindow(QMainWindow):
                 # 단, 이 경우 i2c_device를 전달하는 방식이 다를 수 있음
                 if hasattr(self.tab_settings_widget, 'load_settings'):
                     self.tab_settings_widget.load_settings()
-                if hasattr(self.tab_settings_widget, 'update_evb_status_display'): # EVB 상태 별도 업데이트
-                    chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)
-                    self.tab_settings_widget.update_evb_status_display(self.i2c_device, chip_id_to_display)
+                if hasattr(self.tab_settings_widget, 'update_evb_status'): # EVB 상태 별도 업데이트 / 이름 수정
+                    chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "N/A")
+                    # Ensure chip_id_to_display is suitable for direct display or convert if necessary
+                    status_msg_detail = chip_id_to_display
+                    if self.i2c_device and self.i2c_device.is_opened and hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id:
+                        # If connected, use the actual chip_id from the device, which should be an int
+                        try:
+                            if isinstance(self.i2c_device.chip_id, int):
+                                status_msg_detail = f"ID: {self.i2c_device.chip_id:#04X} (connected)"
+                            else:
+                                status_msg_detail = f"ID: {self.i2c_device.chip_id} (connected, format error)"
+                        except (TypeError, ValueError):
+                            status_msg_detail = f"ID: {self.i2c_device.chip_id} (connected, format error)"
+                        self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, status_msg_detail)
+                    elif chip_id_to_display:
+                        # Don't try to format a string with hex format code
+                        if isinstance(chip_id_to_display, int):
+                            status_msg_detail = f"ID: {chip_id_to_display:#04X} (from settings)"
+                        else:
+                            status_msg_detail = f"ID: {chip_id_to_display} (from settings)"
+                        self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, status_msg_detail)
 
 
     def _clear_hardware_instances(self):
@@ -378,14 +396,19 @@ class RegMapWindow(QMainWindow):
                     self.i2c_device, self.multimeter, self.sourcemeter, self.chamber
                 )
         
-        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status_display'):
-             chip_id_to_display = ""
-             if self.tab_settings_widget.chip_id_input: # SettingsTab의 chip_id_input이 public이라고 가정
-                 chip_id_to_display = self.tab_settings_widget.chip_id_input.text().strip()
-             if not chip_id_to_display: # UI에 없으면 current_settings에서 가져옴
-                 chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)
-
-             self.tab_settings_widget.update_evb_status_display(self.i2c_device, chip_id_to_display)
+        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status'): # 이름 수정
+             message_detail = "Unknown" 
+             if self.i2c_device and self.i2c_device.is_opened and hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id:
+                 message_detail = f"ID: {self.i2c_device.chip_id:#04X}"
+             elif self.tab_settings_widget and hasattr(self.tab_settings_widget, 'chip_id_input') and self.tab_settings_widget.chip_id_input: # SettingsTab의 chip_id_input이 public이라고 가정
+                 chip_id_ui = self.tab_settings_widget.chip_id_input.text().strip()
+                 if chip_id_ui : message_detail = f"Attempted ID: {chip_id_ui}"
+                 elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY):
+                      message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
+             elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY):
+                 message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
+             
+             self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, message_detail)
         print("DEBUG: Hardware initialization from settings completed.")
 
     def _create_file_selection_area(self):
@@ -573,13 +596,19 @@ class RegMapWindow(QMainWindow):
         
         self._init_i2c_device()
 
-        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status_display'):
-            chip_id_to_display = ""
-            if hasattr(self.tab_settings_widget, 'get_current_chip_id_input'): # SettingsTab에 해당 메소드가 있다고 가정
-                chip_id_to_display = self.tab_settings_widget.get_current_chip_id_input()
-            if not chip_id_to_display:
-                 chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)
-            self.tab_settings_widget.update_evb_status_display(self.i2c_device, chip_id_to_display)
+        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status'): # 이름 수정
+            message_detail = "Unknown"
+            if self.i2c_device and self.i2c_device.is_opened and hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id:
+                message_detail = f"ID: {self.i2c_device.chip_id:#04X}"
+            elif hasattr(self.tab_settings_widget, 'get_current_chip_id_input'): # SettingsTab에 해당 메소드가 있다고 가정
+                chip_id_ui = self.tab_settings_widget.get_current_chip_id_input()
+                if chip_id_ui: message_detail = f"Attempted ID: {chip_id_ui}"
+                elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY): # UI에 없으면 current_settings에서 가져옴
+                    message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
+            elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY):
+                 message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
+
+            self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, message_detail)
 
         if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
             self.tab_sequence_controller_widget.update_hardware_instances(
@@ -599,9 +628,28 @@ class RegMapWindow(QMainWindow):
                     self.tab_settings_widget.populate_settings(self.current_settings, self.i2c_device)
                 else: # Fallback if populate_settings is not available
                     if hasattr(self.tab_settings_widget, 'load_settings'): self.tab_settings_widget.load_settings()
-                    if hasattr(self.tab_settings_widget, 'update_evb_status_display'):
-                        chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)
-                        self.tab_settings_widget.update_evb_status_display(self.i2c_device, chip_id_to_display)
+                    if hasattr(self.tab_settings_widget, 'update_evb_status'):
+                        chip_id_to_display = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "N/A")
+                        # Ensure chip_id_to_display is suitable for direct display or convert if necessary
+                        status_msg_detail = chip_id_to_display
+                        if self.i2c_device and self.i2c_device.is_opened and hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id:
+                            # If connected, use the actual chip_id from the device, which should be an int
+                            try:
+                                if isinstance(self.i2c_device.chip_id, int):
+                                    status_msg_detail = f"ID: {self.i2c_device.chip_id:#04X} (connected)"
+                                else:
+                                    status_msg_detail = f"ID: {self.i2c_device.chip_id} (connected, format error)"
+                            except (TypeError, ValueError):
+                                status_msg_detail = f"ID: {self.i2c_device.chip_id} (connected, format error)"
+                        elif chip_id_to_display:
+                            # Don't try to format a string with hex format code
+                            if isinstance(chip_id_to_display, int):
+                                status_msg_detail = f"ID: {chip_id_to_display:#04X} (from settings)"
+                            else:
+                                status_msg_detail = f"ID: {chip_id_to_display} (from settings)"
+                        else:
+                            status_msg_detail = "Chip ID not set in settings"
+                        self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, status_msg_detail)
 
 
             if self.tab_sequence_controller_widget:

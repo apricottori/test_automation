@@ -3,71 +3,77 @@ import json
 import os
 from typing import List, Dict, Optional
 from . import constants
+from datetime import datetime
 
 class SequenceIOManager:
     """
     테스트 시퀀스를 파일 시스템에 저장하고 불러오는 기능을 관리하는 클래스입니다.
     """
 
-    @staticmethod
-    def save_sequence(filepath: str, items: List[str]) -> bool:
+    def __init__(self, sequences_dir: str):
+        self.sequences_dir = sequences_dir
+
+    def save_sequence(self, sequence_name: str, sequence_lines: List[str], overwrite: bool = False) -> bool:
         """
-        주어진 시퀀스 아이템 리스트를 JSON 파일로 저장합니다.
-        JSON 루트 객체는 {"steps": items_list} 형태를 가집니다.
-
+        시퀀스 파일을 저장합니다. 디렉토리가 없으면 생성합니다.
         Args:
-            filepath (str): 시퀀스를 저장할 전체 파일 경로.
-            items (List[str]): 저장할 시퀀스 아이템(문자열) 리스트.
-
+            sequence_name (str): 저장할 시퀀스 이름 (확장자 없이)
+            sequence_lines (List[str]): 시퀀스 항목 리스트
+            overwrite (bool): 파일이 이미 존재할 때 덮어쓸지 여부
         Returns:
-            bool: 저장 성공 시 True, 실패 시 False.
+            bool: 저장 성공 여부
         """
         try:
-            data_to_save = {"steps": items}
+            if not os.path.exists(self.sequences_dir):
+                os.makedirs(self.sequences_dir, exist_ok=True)
+                print(f"[SequenceIOManager] Created directory: {self.sequences_dir}")
+            filename = sequence_name
+            if not filename.endswith(constants.SEQUENCE_FILE_EXTENSION):
+                filename += constants.SEQUENCE_FILE_EXTENSION
+            filepath = os.path.join(self.sequences_dir, filename)
+            if os.path.exists(filepath) and not overwrite:
+                print(f"[SequenceIOManager] File already exists and overwrite is False: {filepath}")
+                return False
+            data = {
+                "sequence_lines": sequence_lines,
+                "saved_at": datetime.now().isoformat(),
+            }
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data_to_save, f, indent=4, ensure_ascii=False)
-            print(f"Info: 시퀀스가 '{filepath}'에 성공적으로 저장되었습니다.")
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            print(f"[SequenceIOManager] Sequence saved: {filepath}")
             return True
-        except IOError as e:
-            print(f"Error: 시퀀스 파일 저장 중 IO 오류 발생 '{filepath}': {e}")
-            return False
         except Exception as e:
-            print(f"Error: 시퀀스 파일 저장 중 예기치 않은 오류 발생 '{filepath}': {e}")
+            print(f"[SequenceIOManager] Error saving sequence: {e}")
             return False
 
     @staticmethod
     def load_sequence(filepath: str) -> Optional[List[str]]:
         """
         JSON 파일에서 시퀀스 아이템 리스트를 로드합니다.
-        파일 내 "steps" 키에 해당하는 리스트를 반환합니다.
-
+        파일 내 "sequence_lines" 키에 해당하는 리스트를 반환합니다.
         Args:
             filepath (str): 로드할 시퀀스 파일의 전체 경로.
-
         Returns:
             Optional[List[str]]: 로드된 시퀀스 아이템 리스트. 
-                                 파일이 없거나, JSON 파싱 실패, "steps" 키 부재 시 None 반환.
+                                 파일이 없거나, JSON 파싱 실패, "sequence_lines" 키 부재 시 None 반환.
         """
         if not os.path.exists(filepath):
-            print(f"Error: 시퀀스 파일 로드 실패 - 파일을 찾을 수 없습니다: '{filepath}'")
+            print(f"[SequenceIOManager] Error: File not found: '{filepath}'")
             return None
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            if "steps" in data and isinstance(data["steps"], list):
-                print(f"Info: 시퀀스를 '{filepath}'에서 성공적으로 로드했습니다.")
+            if "sequence_lines" in data:
+                print(f"[SequenceIOManager] Sequence loaded: {filepath}")
+                return data["sequence_lines"]
+            elif "steps" in data:
+                print(f"[SequenceIOManager] Legacy sequence loaded: {filepath}")
                 return data["steps"]
             else:
-                print(f"Error: 시퀀스 파일 '{filepath}'에 'steps' 키가 없거나 유효한 리스트가 아닙니다.")
+                print(f"[SequenceIOManager] Error: No sequence_lines or steps key in file: {filepath}")
                 return None
-        except json.JSONDecodeError as e:
-            print(f"Error: 시퀀스 파일 JSON 파싱 오류 '{filepath}': {e}")
-            return None
-        except IOError as e:
-            print(f"Error: 시퀀스 파일 로드 중 IO 오류 발생 '{filepath}': {e}")
-            return None
         except Exception as e:
-            print(f"Error: 시퀀스 파일 로드 중 예기치 않은 오류 발생 '{filepath}': {e}")
+            print(f"[SequenceIOManager] Error loading sequence: {e}")
             return None
 
     @staticmethod
@@ -173,7 +179,7 @@ if __name__ == '__main__':
     if not os.path.exists(test_dir):
         os.makedirs(test_dir)
 
-    io_manager = SequenceIOManager()
+    io_manager = SequenceIOManager(test_dir)
 
     # 1. 시퀀스 저장 테스트
     print("\n--- 시퀀스 저장 테스트 ---")
@@ -183,8 +189,8 @@ if __name__ == '__main__':
     save_path1 = os.path.join(test_dir, "TestSeq1" + constants.SEQUENCE_FILE_EXTENSION)
     save_path2 = os.path.join(test_dir, "AnotherSeq" + constants.SEQUENCE_FILE_EXTENSION)
 
-    io_manager.save_sequence(save_path1, seq_items1)
-    io_manager.save_sequence(save_path2, seq_items2)
+    io_manager.save_sequence("TestSeq1", seq_items1)
+    io_manager.save_sequence("AnotherSeq", seq_items2)
 
     # 2. 저장된 시퀀스 목록 조회 테스트
     print("\n--- 저장된 시퀀스 목록 조회 테스트 ---")

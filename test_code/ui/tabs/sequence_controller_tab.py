@@ -2,6 +2,7 @@
 import sys
 import os
 from typing import List, Tuple, Dict, Any, Optional, ForwardRef
+from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
@@ -78,8 +79,10 @@ class SequenceControllerTab(QWidget):
             self.chamber = chamber_instance
             self.sequence_player_thread: Optional[QThread] = None
             self.sequence_player: Optional[SequencePlayer] = None
-            self.sequence_io_manager = SequenceIOManager()
+            
+            # SequenceIOManager 초기화 시 saved_sequences_dir 전달
             self.saved_sequences_dir: str = self._setup_saved_sequences_directory()
+            self.sequence_io_manager = SequenceIOManager(sequences_dir=self.saved_sequences_dir)
 
             # UI 구성
             main_container_layout = QVBoxLayout()
@@ -430,57 +433,82 @@ class SequenceControllerTab(QWidget):
 
     @pyqtSlot()
     def _handle_define_loop(self):
-        if not self._ui_setup_successful: QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
-        if self.sequence_list_widget is None: # None 체크로 변경
-            QMessageBox.critical(self, "오류", "시퀀스 목록 위젯이 유효하지 않습니다."); return
-        
-        selected_items_widgets = self.sequence_list_widget.selectedItems()
-        if not selected_items_widgets:
-            QMessageBox.information(self, "루프 정의", "루프에 포함할 아이템을 목록에서 선택하세요."); return
-
-        target_actions_data: List[Tuple[int, str, Dict[str, str]]] = []
-        temp_player_for_parsing = SequencePlayer([], {}, self.register_map, None, None, None, None, None, self)
-        
-        for item_widget in selected_items_widgets:
-            original_index = self.sequence_list_widget.row(item_widget)
-            item_text = item_widget.text().lstrip() 
+        """루프 정의 다이얼로그를 표시하고 루프 액션을 시퀀스에 추가합니다."""
+        if not self.sequence_list_widget or self.sequence_list_widget.count() == 0:
+            QMessageBox.information(self, "루프 정의", "루프를 정의하려면 시퀀스 목록에 하나 이상의 항목이 필요합니다.")
+            return
             
-            action_prefix, params_dict = temp_player_for_parsing._parse_sequence_item(item_text)
-            
-            if action_prefix and action_prefix not in [constants.SEQ_PREFIX_LOOP_START, constants.SEQ_PREFIX_LOOP_END] and \
-               not self._is_item_in_loop(original_index): 
-                target_actions_data.append((original_index, action_prefix, params_dict))
+        # 다이얼로그에 전달할 현재 시퀀스 아이템 정보 수집
+        target_actions_data = []
         
-        temp_player_for_parsing.deleteLater() 
-
+        self.log_message("Loop definition started - analyzing sequence items")
+        
+        for idx in range(self.sequence_list_widget.count()):
+            item = self.sequence_list_widget.item(idx)
+            if not item: continue  # None 체크
+            
+            # 이미 루프 내에 있는 항목은 제외
+            if self._is_item_in_loop(idx):
+                self.log_message(f"Item {idx} is already in a loop, skipping")
+                continue
+                
+            # 항목 텍스트 파싱
+            action_text = item.text()
+            prefix, params_dict = self._parse_sequence_item(action_text)
+            
+            if prefix and prefix not in [constants.SEQ_PREFIX_LOOP_START, constants.SEQ_PREFIX_LOOP_END]:
+                # 루프 시작/종료가 아닌 일반 액션만 대상에 포함
+                self.log_message(f"Adding item {idx} (prefix={prefix}) to loop candidates")
+                target_actions_data.append((idx, prefix, params_dict))
+            
         if not target_actions_data:
-            QMessageBox.warning(self, "루프 정의 오류", "선택된 아이템 중 유효한 루프 대상 액션이 없거나, 이미 다른 루프의 일부입니다."); return
-
+            QMessageBox.information(self, "루프 정의", 
+                                    "루프 정의 가능한 항목이 없습니다.\n"
+                                    "이미 모든 항목이 루프에 포함되어 있거나 루프에 적합하지 않은 항목입니다.")
+            return
+            
         dialog = LoopDefinitionDialog(target_actions_data, self)
+        self.log_message(f"Opening loop definition dialog with {len(target_actions_data)} candidate items")
+        
         if dialog.exec_() == QDialog.Accepted:
             loop_params = dialog.get_loop_parameters()
-            if loop_params is None:
-                self.log_message("루프 정의가 취소되었거나 파라미터가 유효하지 않습니다.")
-                return
-
-            loop_start_item_text = f"{constants.SEQ_PREFIX_LOOP_START}: " \
-                                 f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={loop_params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX]}; " \
-                                 f"{constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY}='{loop_params[constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY]}'; " \
-                                 f"{constants.SEQ_PARAM_KEY_LOOP_START_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_START_VALUE]}; " \
-                                 f"{constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE]}; " \
-                                 f"{constants.SEQ_PARAM_KEY_LOOP_END_VALUE}={loop_params[constants.SEQ_PARAM_KEY_LOOP_END_VALUE]}"
-
-            first_selected_row = self.sequence_list_widget.row(selected_items_widgets[0])
-            last_selected_row = self.sequence_list_widget.row(selected_items_widgets[-1])
-
-            self.sequence_list_widget.insertItem(first_selected_row, loop_start_item_text)
-            
-            for i in range(len(selected_items_widgets)):
-                item_to_indent = self.sequence_list_widget.item(first_selected_row + 1 + i) 
-                if item_to_indent and not item_to_indent.text().startswith("  "): 
-                    item_to_indent.setText("  " + item_to_indent.text())
-            
-            self.sequence_list_widget.insertItem(last_selected_row + 2, "  " + constants.SEQ_PREFIX_LOOP_END) 
+            if loop_params:
+                self.log_message(f"Loop parameters accepted: {loop_params}")
+                
+                # 루프 정의 파라미터 가져오기
+                action_idx = loop_params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX]
+                target_param_key = loop_params[constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY]
+                start_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_START_VALUE]
+                step_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE]
+                end_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_END_VALUE]
+                
+                # 루프 시작 항목 추가 (대상 액션 바로 앞에)
+                loop_start_text = f"{constants.SEQ_PREFIX_LOOP_START}: " \
+                                f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={action_idx}; " \
+                                f"{constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY}={target_param_key}; " \
+                                f"{constants.SEQ_PARAM_KEY_LOOP_START_VALUE}={start_val}; " \
+                                f"{constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE}={step_val}; " \
+                                f"{constants.SEQ_PARAM_KEY_LOOP_END_VALUE}={end_val}"
+                
+                self.sequence_list_widget.insertItem(action_idx, loop_start_text)
+                
+                # 루프 시작 후 액션 인덱스가 1 증가했으므로 종료도 1 증가
+                target_action_new_idx = action_idx + 1
+                
+                # 루프 종료 항목 추가 (대상 액션 바로 뒤에)
+                loop_end_text = f"{constants.SEQ_PREFIX_LOOP_END}: " \
+                              f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={action_idx}"
+                
+                self.sequence_list_widget.insertItem(target_action_new_idx + 1, loop_end_text)
+                
+                self.log_message("Loop added to sequence")
+                
+                # 새로 추가된 루프 시작 항목 선택
+                self.sequence_list_widget.setCurrentRow(action_idx)
+            else:
+                self.log_message("Loop definition cancelled or invalid parameters")
+        else:
+            self.log_message("Loop definition cancelled by user")
 
     def _is_item_in_loop(self, item_index: int) -> bool:
         if self.sequence_list_widget is None: return False # None 체크로 변경
@@ -648,9 +676,18 @@ class SequenceControllerTab(QWidget):
 
     @pyqtSlot(str)
     def _handle_log_message(self, message: str):
-        if self.execution_log_textedit: 
-            self.execution_log_textedit.append(message)
-            self.execution_log_textedit.ensureCursorVisible() 
+        """시퀀스 플레이어로부터 로그 메시지를 수신하여 로그 창에 표시합니다."""
+        self.log_message(message)
+
+    def log_message(self, message: str):
+        """로그 메시지를 UI의 로그 창에 표시합니다."""
+        if self.execution_log_textedit:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.execution_log_textedit.append(f"[{timestamp}] {message}")
+            # 로그 창을 항상 최신 내용이 보이도록 스크롤
+            self.execution_log_textedit.verticalScrollBar().setValue(
+                self.execution_log_textedit.verticalScrollBar().maximum()
+            )
 
     @pyqtSlot(bool, str)
     def _handle_sequence_finished(self, success_flag: bool, message: str):
@@ -677,6 +714,25 @@ class SequenceControllerTab(QWidget):
     def _on_player_destroyed(self):
         print("Info_SCT: SequencePlayer object has been destroyed.")
 
+    def _parse_sequence_item(self, item_text: str) -> Tuple[Optional[str], Dict[str, str]]:
+        """Parses a single sequence item string into action type and parameters dict."""
+        try:
+            item_text_stripped = item_text.lstrip() 
+            action_type_str, params_str = item_text_stripped.split(":", 1)
+            action_type_str = action_type_str.strip()
+            params_dict = {}
+            if params_str.strip():
+                param_pairs = params_str.split(';')
+                for pair in param_pairs:
+                    if '=' in pair: 
+                        key, value = pair.split('=', 1)
+                        params_dict[key.strip()] = value.strip()
+            return action_type_str, params_dict
+        except ValueError: 
+            # Log this error or handle as appropriate for the controller tab context
+            problematic_item_text = item_text_stripped if "item_text_stripped" in locals() else item_text
+            self.log_message(f"Error: Failed to parse sequence item in controller: '{problematic_item_text}'")
+            return None, {}
 
     def update_hardware_instances(self, 
                                   i2c_dev: Optional[I2CDevice], 

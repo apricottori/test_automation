@@ -4,9 +4,10 @@ from typing import Dict, Any, Optional, Callable, cast, TYPE_CHECKING
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout, QGroupBox, QLabel, QLineEdit,
-    QPushButton, QCheckBox, QMessageBox, QApplication, QSizePolicy, QFormLayout
+    QPushButton, QCheckBox, QMessageBox, QApplication, QSizePolicy, QFormLayout, QHBoxLayout
 )
 from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtWidgets import QStyle
 
 # --- 코어 모듈 임포트 ---
 from core import constants
@@ -35,7 +36,7 @@ class SettingsTab(QWidget):
         # UI 멤버 변수 선언 (타입 힌트 포함)
         self.chip_id_input: Optional[QLineEdit] = None
         self.evb_status_label: Optional[QLabel] = None
-        self.check_evb_button: Optional[QPushButton] = None
+        self.check_evb_button: Optional[QPushButton] = None # 원래의 EVB 체크 버튼
 
         self.use_multimeter_checkbox: Optional[QCheckBox] = None
         self.multimeter_serial_label: Optional[QLabel] = None
@@ -54,6 +55,7 @@ class SettingsTab(QWidget):
 
         self._init_ui()
         self.load_settings()
+        self._connect_signals() # _connect_signals 호출 추가
 
     def _init_ui(self) -> None:
         """UI 요소들을 초기화하고 레이아웃을 설정합니다."""
@@ -82,28 +84,29 @@ class SettingsTab(QWidget):
 
     def _create_evb_status_group(self) -> QGroupBox:
         """EVB 상태 및 칩 ID 설정 그룹 박스를 생성합니다."""
-        evb_group_box = QGroupBox(constants.SETTINGS_EVB_STATUS_GROUP_TITLE, self)
+        evb_group_box = QGroupBox("I2C/EVB 설정")
         layout = QGridLayout(evb_group_box)
-        layout.setColumnStretch(1, 1) # 입력 필드가 남은 공간을 차지하도록
 
         # Chip ID
-        chip_id_label = QLabel(constants.SETTINGS_CHIP_ID_LABEL, evb_group_box)
-        self.chip_id_input = QLineEdit(evb_group_box)
-        self.chip_id_input.setPlaceholderText("e.g., 0x18")
-        layout.addWidget(chip_id_label, 0, 0)
+        layout.addWidget(QLabel("Chip ID (Hex):"), 0, 0)
+        self.chip_id_input = QLineEdit()
         layout.addWidget(self.chip_id_input, 0, 1)
 
-        # EVB Connection Status
+        # EVB Connection Status - Text Label 추가
         evb_status_text_label = QLabel(constants.SETTINGS_EVB_STATUS_LABEL_TEXT, evb_group_box)
-        self.evb_status_label = QLabel("Unknown", evb_group_box) # 초기 상태
-        self.evb_status_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(evb_status_text_label, 1, 0)
-        layout.addWidget(self.evb_status_label, 1, 1)
-
-        # Check EVB Connection Button
+        
+        # EVB Status - 상태 표시 라벨
+        self.evb_status_label = QLabel()
+        self.evb_status_label.setStyleSheet("font-weight: bold;")
+        self.update_evb_status(False, "연결 상태 확인 중...") # 초기 상태
+        layout.addWidget(self.evb_status_label, 1, 1) # evb_status_layout 대신 직접 추가
+        
+        # 원래의 Check EVB Connection Button 복원
         self.check_evb_button = QPushButton(constants.SETTINGS_EVB_BTN_CHECK_TEXT, evb_group_box)
-        if self.check_evb_button: # None 체크
-             self.check_evb_button.clicked.connect(self.check_evb_connection_requested.emit)
+        if self.check_evb_button:
+             self.check_evb_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload)) # 아이콘 추가
+             # self.check_evb_button.clicked.connect(self.check_evb_connection_requested.emit) # 연결은 _connect_signals에서
         layout.addWidget(self.check_evb_button, 2, 0, 1, 2, Qt.AlignCenter) # 버튼을 가운데 정렬
 
         return evb_group_box
@@ -220,7 +223,9 @@ class SettingsTab(QWidget):
     def _connect_signals(self) -> None:
         # 버튼 및 UI 요소의 시그널을 슬롯에 연결합니다.
         if hasattr(self, 'save_settings_button') and self.save_settings_button:
-            self.save_settings_button.clicked.connect(self._save_settings_and_notify) # 변경: _save_settings -> _save_settings_and_notify
+            self.save_settings_button.clicked.connect(self._save_settings_and_notify)
+        
+        # check_evb_button 시그널 연결 복원
         if hasattr(self, 'check_evb_button') and self.check_evb_button:
             self.check_evb_button.clicked.connect(self.check_evb_connection_requested.emit)
         
@@ -238,41 +243,75 @@ class SettingsTab(QWidget):
         IndentationError를 피하기 위해 pass를 사용합니다.
         성공적으로 저장되면 True, 아니면 False를 반환해야 합니다.
         """
-        # TODO: 이 함수의 실제 저장 로직을 구현하거나, _save_settings_and_notify로 완전 통합 필요.
-        # 임시로 pass를 넣어 IndentationError를 해결합니다.
-        pass
+        # 이 함수는 _save_settings_and_notify로 통합되었으므로 실제 로직은 필요 없음.
+        # 호출되지 않도록 하거나, 호출된다면 True를 반환하여 흐름을 유지 (단, 저장은 _save_settings_and_notify에서 수행)
+        # 여기서는 get_current_settings()를 호출하여 self.current_settings를 업데이트하고, 저장을 시도.
+        self.current_settings = self.get_current_settings()
+        return self.settings_manager.save_settings(self.current_settings)
+
+    def _settings_require_hardware_reinit(self, old_settings: Dict[str, Any], new_settings: Dict[str, Any]) -> bool:
+        """하드웨어 관련 설정이 변경되었는지 확인합니다."""
+        hw_related_keys = [
+            constants.SETTINGS_CHIP_ID_KEY,
+            constants.SETTINGS_MULTIMETER_USE_KEY, constants.SETTINGS_MULTIMETER_SERIAL_KEY,
+            constants.SETTINGS_SOURCEMETER_USE_KEY, constants.SETTINGS_SOURCEMETER_SERIAL_KEY,
+            constants.SETTINGS_CHAMBER_USE_KEY, constants.SETTINGS_CHAMBER_SERIAL_KEY
+        ]
+        
+        for key in hw_related_keys:
+            if old_settings.get(key) != new_settings.get(key):
+                return True
+        return False
 
     def _save_settings_and_notify(self) -> None:
         """설정을 저장하고, 변경 사항을 알리며, 필요한 경우 하드웨어 재초기화를 요청합니다."""
-        # 기존 설정을 복사해둠 (변경 여부 비교용)
-        old_settings_copy = self.current_settings.copy()
+        old_settings_copy = self.current_settings.copy() # 기존 설정 복사
 
-        if self._save_settings(): # UI의 현재 값을 current_settings에 업데이트하고 파일에 저장
+        # UI에서 현재 설정 값을 가져와 self.current_settings 업데이트 및 저장 시도
+        if self._save_settings(): # 이 호출이 self.current_settings를 업데이트하고 파일에 저장
+            # 테스트 시퀀스 탭 활성화 여부 결정
+            # 하나 이상의 장비가 사용 체크되어 있으면 활성화
+            enable_test_sequence_tab = any([
+                self.use_multimeter_checkbox and self.use_multimeter_checkbox.isChecked(),
+                self.use_sourcemeter_checkbox and self.use_sourcemeter_checkbox.isChecked(),
+                self.use_chamber_checkbox and self.use_chamber_checkbox.isChecked()
+            ])
+            
+            # 메인 윈도우가 참조되어 있고 탭 위젯이 있다면
+            if self.main_window_ref and hasattr(self.main_window_ref, 'tabs'):
+                main_tabs = self.main_window_ref.tabs
+                sequence_tab_widget = getattr(self.main_window_ref, 'tab_sequence_controller_widget', None)
+                if main_tabs and sequence_tab_widget:
+                    # 탭 인덱스 찾기
+                    tab_idx = main_tabs.indexOf(sequence_tab_widget)
+                    if tab_idx >= 0:
+                        # 현재 상태와 새로운 상태가 다른 경우에만 로그 출력
+                        current_enabled = main_tabs.isTabEnabled(tab_idx)
+                        if current_enabled != enable_test_sequence_tab:
+                            if enable_test_sequence_tab:
+                                print("Info: Test Sequence tab is now enabled - at least one instrument is checked.")
+                            else:
+                                print("Info: Test Sequence tab is now disabled - no instruments are checked.")
+                        
+                        # 탭 활성화/비활성화 설정
+                        main_tabs.setTabEnabled(tab_idx, enable_test_sequence_tab)
+            
+            # 설정 변경 시그널 발생
             self.settings_changed_signal.emit(self.current_settings)
+            QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, constants.MSG_SETTINGS_SAVED)
 
-            # 하드웨어 관련 설정이 변경되었는지 확인
-            hw_related_keys = [
-                constants.SETTINGS_CHIP_ID_KEY,
-                constants.SETTINGS_MULTIMETER_USE_KEY, constants.SETTINGS_MULTIMETER_SERIAL_KEY,
-                constants.SETTINGS_SOURCEMETER_USE_KEY, constants.SETTINGS_SOURCEMETER_SERIAL_KEY,
-                constants.SETTINGS_CHAMBER_USE_KEY, constants.SETTINGS_CHAMBER_SERIAL_KEY
-            ]
-            
-            requires_reinitialization = False
-            for key in hw_related_keys:
-                if old_settings_copy.get(key) != self.current_settings.get(key):
-                    requires_reinitialization = True
-                    break
-            
-            if requires_reinitialization:
+            # 하드웨어 재초기화가 필요한지 확인
+            if self._settings_require_hardware_reinit(old_settings_copy, self.current_settings):
                 reply = QMessageBox.question(self, "하드웨어 재초기화",
-                                             "하드웨어 관련 설정이 변경되었습니다.\n"
-                                             "변경된 설정을 적용하려면 하드웨어를 재초기화해야 합니다.\n"
-                                             "지금 재초기화하시겠습니까?",
-                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                                            "하드웨어 관련 설정이 변경되었습니다.\n"
+                                            "변경된 설정을 적용하려면 하드웨어를 재초기화해야 합니다.\n"
+                                            "지금 재초기화하시겠습니까?",
+                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                 if reply == QMessageBox.Yes:
                     self.reinitialize_hardware_requested.emit(self.current_settings)
-
+        else:
+            # 저장 실패 시 메시지 표시
+            QMessageBox.warning(self, constants.MSG_TITLE_ERROR, constants.MSG_SETTINGS_SAVE_FAILED)
 
     def update_evb_status(self, is_connected: bool, message: str = "") -> None:
         """EVB 연결 상태를 UI에 업데이트합니다."""
@@ -339,6 +378,25 @@ class SettingsTab(QWidget):
                 self.chamber_serial_label.setEnabled(ch_enabled)
             if hasattr(self, 'chamber_serial_input') and self.chamber_serial_input:
                 self.chamber_serial_input.setEnabled(ch_enabled)
+
+    def _handle_reconnect_clicked(self):
+        """장치 연결 상태 재확인 버튼 클릭 핸들러 (이제 사용되지 않음)"""
+        # 이 메서드는 reconnect_button 이 제거되었으므로 호출되지 않아야 함.
+        # 혹시 모를 호출에 대비해 pass 또는 로깅 추가 가능
+        print("DEBUG: _handle_reconnect_clicked called, but reconnect_button should be removed.")
+        pass 
+        # # 연결 상태 확인 중임을 사용자에게 알림
+        # self.update_evb_status(False, "연결 상태 확인 중...")
+        # QApplication.processEvents()  # UI 업데이트를 즉시 반영
+        
+        # # 재연결 시도 신호 발생
+        # self.check_evb_connection_requested.emit()
+        # # self.check_instrument_connection_requested.emit() # 이 시그널은 정의되지 않았으므로 주석 처리
+        
+        # # 사용자에게 알림
+        # QMessageBox.information(self, "장치 연결 상태 확인", 
+        #                       "모든 장치의 연결 상태 확인이 요청되었습니다.\n"
+        #                       "상태 라벨에서 최신 연결 정보를 확인하세요.")
 
 if __name__ == '__main__':
     # 이 파일 단독 실행을 위한 테스트 코드
