@@ -58,8 +58,8 @@ TERMINAL_FRONT: str = TerminalType.FRONT.value
 TERMINAL_REAR: str = TerminalType.REAR.value
 
 # UI 표시용 불리언 문자열 상수 (ActionInputPanel에서 사용될 수 있음)
-BOOL_TRUE: str = "TRUE" 
-BOOL_FALSE: str = "FALSE" 
+BOOL_TRUE: str = "TRUE"
+BOOL_FALSE: str = "FALSE"
 
 class ErrorCode(Enum):
     HEX_BITS_ERROR = "0xERR_BITS"
@@ -109,11 +109,11 @@ SETTINGS_EVB_STATUS_LABEL_TEXT: str = "EVB Connection Status:"
 SETTINGS_EVB_BTN_CHECK_TEXT: str = "Check EVB Connection"
 SETTINGS_INSTRUMENT_GROUP_TITLE: str = "Instrument Settings"
 SETTINGS_USE_MULTIMETER_LABEL: str = "Use Multimeter (Agilent/Keysight 344xx)"
-SETTINGS_MULTIMETER_SERIAL_LABEL: str = "Multimeter Address/Serial:"
+SETTINGS_MULTIMETER_SERIAL_LABEL: str = "Multimeter GPIB Address:" # 수정됨
 SETTINGS_USE_SOURCEMETER_LABEL: str = "Use Sourcemeter (Keithley 24xx)"
-SETTINGS_SOURCEMETER_SERIAL_LABEL: str = "Sourcemeter Address/Serial:"
+SETTINGS_SOURCEMETER_SERIAL_LABEL: str = "Sourcemeter GPIB Address:" # 수정됨
 SETTINGS_USE_CHAMBER_LABEL: str = "Use Chamber (SU-241, etc.)"
-SETTINGS_CHAMBER_SERIAL_LABEL: str = "Chamber Address/Serial (Optional):"
+SETTINGS_CHAMBER_SERIAL_LABEL: str = "Chamber GPIB Address (Optional):" # 수정됨
 SETTINGS_EXECUTION_GROUP_TITLE: str = "Execution Options"
 SETTINGS_ERROR_HALTS_SEQUENCE_LABEL: str = "Halt sequence on error"
 SETTINGS_SAVE_BUTTON_TEXT: str = "Save Settings"
@@ -231,7 +231,7 @@ MSG_FIELD_ID_NOT_FOUND: str = "Register name '{field_id}' not found."
 MSG_SETTINGS_SAVED: str = "Settings saved successfully."
 MSG_SETTINGS_SAVE_FAILED: str = "Failed to save settings."
 MSG_DEVICE_NOT_ENABLED: str = "{device_name} is not enabled or not initialized."
-MSG_DEVICE_CONNECTION_FAILED: str = "{device_name} (Address/Serial: {serial_number}) connection failed."
+MSG_DEVICE_CONNECTION_FAILED: str = "{device_name} (GPIB Address: {serial_number}) connection failed." # 수정됨
 MSG_ACTION_NOT_SUPPORTED: str = "Selected action type is not currently supported."
 MSG_SEQUENCE_PLAYBACK_COMPLETE: str = "Test sequence execution completed."
 MSG_SEQUENCE_PLAYBACK_ABORTED: str = "Test sequence execution aborted."
