@@ -1,0 +1,22 @@
+{
+    "chip_id": "0x18",
+    "multimeter_use": false,
+    "multimeter_serial": "GPIB0::22::INSTR",
+    "sourcemeter_use": false,
+    "sourcemeter_serial": "GPIB0::24::INSTR",
+    "chamber_use": false,
+    "chamber_serial": "",
+    "last_json_path": "/Users/hlee2/Documents/Henry_Mac/Python/anto/test_automation/P24X_regmap.json",
+    "excel_export_sheets_config": [
+        {
+            "sheet_name": "AllData",
+            "columns": [
+                "Timestamp",
+                "Variable Name",
+                "Value",
+                "Sample Number"
+            ]
+        }
+    ],
+    "error_halts_sequence": false
+}

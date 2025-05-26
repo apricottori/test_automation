@@ -256,7 +256,10 @@ class RegMapWindow(QMainWindow):
         # SettingsTab UI 채우기 (하드웨어 초기화 및 JSON 로드 시도 후)
         if self.tab_settings_widget:
             self.tab_settings_widget.populate_settings(self.current_settings, self.i2c_device)
-
+        # EVB 상태 업데이트 (populate_settings 내부에서 호출되지만, 명시적으로 한 번 더 호출하여 최신 상태 보장 가능)
+        # 또는 populate_settings가 항상 마지막에 호출되도록 순서 조정
+        # if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status_display'):
+        #     self.tab_settings_widget.update_evb_status_display(self.i2c_device, self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY))
     def _clear_hardware_instances(self):
         """모든 하드웨어 인스턴스를 안전하게 닫고 None으로 설정합니다."""
         if self.i2c_device: self.i2c_device.close(); self.i2c_device = None
@@ -272,7 +275,12 @@ class RegMapWindow(QMainWindow):
 
     def _init_i2c_device(self):
         """I2C 장치를 설정값에 따라 초기화합니다."""
-        chip_id = self.current_settings.get('chip_id', "")
+        # SettingsTab의 입력값을 우선적으로 사용하거나, current_settings의 값을 사용
+        chip_id_from_settings_tab = None
+        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'get_current_chip_id_input'):
+            chip_id_from_settings_tab = self.tab_settings_widget.get_current_chip_id_input()
+
+        chip_id = chip_id_from_settings_tab if chip_id_from_settings_tab else self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "")
         if chip_id:
             self.i2c_device = I2CDevice(chip_id_str=chip_id)
             if self.i2c_device and self.i2c_device.is_opened:
@@ -355,7 +363,7 @@ class RegMapWindow(QMainWindow):
         
         # SettingsTab의 EVB 상태 표시 업데이트
         if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status_display'):
-             self.tab_settings_widget.update_evb_status_display(self.i2c_device, self.current_settings.get('chip_id'))
+             self.tab_settings_widget.update_evb_status_display(self.i2c_device, self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY))
         print("DEBUG: Hardware initialization from settings completed.")
 
 
@@ -420,6 +428,8 @@ class RegMapWindow(QMainWindow):
         if self.tab_settings_widget:
             # populate_settings는 _load_app_settings 또는 _handle_settings_changed에서 i2c_device와 함께 호출됨
             self.tab_settings_widget.settings_changed_signal.connect(self._handle_settings_changed)
+            if hasattr(self.tab_settings_widget, 'evb_check_requested_signal'):
+                self.tab_settings_widget.evb_check_requested_signal.connect(self._handle_evb_check_request)
             self.tabs.addTab(self.tab_settings_widget, constants.TAB_SETTINGS_TITLE)
         
         # Register Viewer Tab
@@ -431,23 +441,38 @@ class RegMapWindow(QMainWindow):
                 self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False) 
 
         # Sequence Controller Tab
-        self.tab_sequence_controller_widget = SequenceControllerTab(
-            parent=self,
-            register_map_instance=self.register_map,
-            settings_instance=self.current_settings, # 초기 설정 전달
-            completer_model_instance=self.completer_model, 
-            i2c_device_instance=self.i2c_device, # 초기 하드웨어 인스턴스 전달
-            multimeter_instance=self.multimeter,
-            sourcemeter_instance=self.sourcemeter,
-            chamber_instance=self.chamber,
-            main_window_ref=self # RegMapWindow 자신을 참조로 전달
-        )
+        try:
+            self.tab_sequence_controller_widget = SequenceControllerTab(
+                parent=self,
+                register_map_instance=self.register_map,
+                settings_instance=self.current_settings, # Pass initial settings
+                completer_model_instance=self.completer_model,
+                i2c_device_instance=self.i2c_device, # Pass initial hardware instances
+                multimeter_instance=self.multimeter,
+                sourcemeter_instance=self.sourcemeter,
+                chamber_instance=self.chamber,
+                main_window_ref=self # Pass RegMapWindow itself as a reference
+            )
+        except Exception as e_seq_tab:
+            self.tab_sequence_controller_widget = None # Ensure it's None on error
+            error_msg = f"CRITICAL ERROR instantiating SequenceControllerTab: {type(e_seq_tab).__name__} - {e_seq_tab}"
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Tab Creation Error", f"{error_msg}\n\nThe 'Test Sequence' tab could not be created.")
+            # Depending on severity, you might want to sys.exit(1) here or allow the app to continue without this tab.
+
         if self.tab_sequence_controller_widget:
             self.tab_sequence_controller_widget.new_measurement_signal.connect(self._handle_new_measurement_from_sequence)
             self.tab_sequence_controller_widget.sequence_status_changed_signal.connect(self._handle_sequence_status_changed)
             self.tabs.addTab(self.tab_sequence_controller_widget, constants.TAB_SEQUENCE_CONTROLLER_TITLE)
             if self.tabs.indexOf(self.tab_sequence_controller_widget) != -1:
                 self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
+        else:
+            print("ERROR: SequenceControllerTab widget is None after instantiation attempt. Tab will not be added.")
+            # Optionally, add a disabled placeholder tab or a message
+            # self.tabs.addTab(QWidget(), f"{constants.TAB_SEQUENCE_CONTROLLER_TITLE} (Error)")
+            # self.tabs.setTabEnabled(self.tabs.count() -1, False)
 
         # Results Viewer Tab
         self.tab_results_viewer_widget = ResultsViewerTab(parent=self)
@@ -489,6 +514,31 @@ class RegMapWindow(QMainWindow):
         self.current_settings[constants.SETTINGS_EXCEL_SHEETS_CONFIG_KEY] = excel_config
         if not self.settings_manager.save_settings(self.current_settings):
             QMessageBox.warning(self, constants.MSG_TITLE_ERROR, "Excel 내보내기 설정 저장에 실패했습니다.")
+
+    @pyqtSlot() # 파라미터가 없는 시그널에 맞게 수정
+    def _handle_evb_check_request(self):
+        """SettingsTab에서 EVB 연결 확인 요청을 처리합니다."""
+        print("DEBUG: EVB connection check requested by user.")
+        self.statusBar().showMessage("EVB 연결 상태 확인 중...", 2000)
+
+        # I2C 장치만 재초기화 시도
+        if self.i2c_device:
+            self.i2c_device.close()
+            self.i2c_device = None
+        
+        self._init_i2c_device() # 설정 또는 SettingsTab의 현재 chip_id 값으로 I2C 재시도
+
+        # SettingsTab의 EVB 상태 표시 업데이트
+        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status_display'):
+            chip_id_to_display = self.tab_settings_widget.get_current_chip_id_input() or self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)
+            self.tab_settings_widget.update_evb_status_display(self.i2c_device, chip_id_to_display)
+
+        # SequenceControllerTab에도 변경된 i2c_device 인스턴스 전달 (다른 하드웨어는 그대로 유지)
+        if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
+            self.tab_sequence_controller_widget.update_hardware_instances(
+                self.i2c_device, self.multimeter, self.sourcemeter, self.chamber
+            )
+        self.statusBar().showMessage("EVB 연결 상태 확인 완료.", 3000)
 
     @pyqtSlot(dict)
     def _handle_settings_changed(self, new_settings_from_tab: dict):
