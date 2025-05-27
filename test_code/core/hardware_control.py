@@ -1,5 +1,6 @@
 # core/hardware_control.py
 import time
+import re # Add re import
 # typing 모듈에서 필요한 요소들을 임포트합니다.
 from typing import Optional, Tuple, Any, ForwardRef, TYPE_CHECKING 
 from PyQt5.QtCore import pyqtSignal
@@ -266,26 +267,42 @@ class GPIBDevice:
 
     def gpib_query(self, command_str: str, delay: Optional[float] = None) -> tuple[bool, Optional[str]]:
         if not self.is_connected or not self.instrument:
-            print(f"Error: {self.device_name}이(가) 연결되지 않았습니다.")
+            print(f"Error: {self.device_name}이(가) 연결되지 않았습니다. (gpib_query)")
             return False, None
 
         querier = None
         if hasattr(self.instrument, 'query'):
             querier = self.instrument.query
-        elif hasattr(self.instrument, 'gpib') and hasattr(self.instrument.gpib, 'query'):
+        elif hasattr(self.instrument, 'gpib') and hasattr(self.instrument.gpib, 'query'): # For raonpy structure
             querier = self.instrument.gpib.query
-
-        if querier:
-            try:
-                if delay: time.sleep(delay)
-                response = querier(command_str)
-                response_str = response.strip() if isinstance(response, str) else str(response) 
-                return True, response_str
-            except Exception as e:
-                print(f"Error: {self.device_name} 쿼리 중 오류 ('{command_str}'): {e}")
-                return False, None
-        else:
+        
+        if not querier:
             print(f"Error: {self.device_name}에 'query' 또는 'gpib.query' 메서드가 없습니다.")
+            return False, None
+
+        try:
+            if delay: 
+                print(f"DEBUG_GPIB_QUERY: Delaying for {delay}s before query.")
+                time.sleep(delay)
+            
+            print(f"DEBUG_GPIB_QUERY: Sending query '{command_str}' to {self.device_name}")
+            response = querier(command_str) # This might be where raonpy handles/suppresses timeout
+            print(f"DEBUG_GPIB_QUERY: Raw response from querier for '{command_str}': '{response}' (type: {type(response)})")
+
+            if response is None: # Explicitly check for None, which might indicate timeout/error from raonpy
+                print(f"Error: {self.device_name} query ('{command_str}') returned None. Assuming read error/timeout.")
+                return False, None
+            
+            response_str = str(response).strip()
+            
+            # If after stripping, the string is empty OR it's literally "None" (as seen in log)
+            if not response_str or response_str.lower() == 'none': 
+                print(f"Error: {self.device_name} query ('{command_str}') resulted in empty or 'None' string after strip: '{response_str}'")
+                return False, None # Treat as failure
+
+            return True, response_str
+        except Exception as e: # Catch any other Python-level exceptions during the query
+            print(f"Error: {self.device_name} 쿼리 중 예외 발생 ('{command_str}'): {type(e).__name__} - {e}")
             return False, None
 
     def reset(self) -> bool:
@@ -298,36 +315,67 @@ class GPIBDevice:
 
 class Multimeter(GPIBDevice):
     def __init__(self, serial_number_str: str):
+        # Match the device_name string used in your connect logic
         super().__init__(serial_number_str, "Multimeter (Agilent34401A)", Agilent34401A_런타임)
-    # ... (Multimeter의 나머지 메소드들은 이전과 동일하게 유지) ...
+
     def measure_voltage(self) -> tuple[bool, Optional[float]]:
-        if not self.is_connected or not self.instrument: return False, None
-        raw_value: Any = None
-        try:
-            if hasattr(self.instrument, 'measure_voltage'):
-                raw_value = self.instrument.measure_voltage() 
-            else: 
-                success_query, raw_value_str = self.gpib_query(":MEASure:VOLTage:DC?")
-                if not success_query or raw_value_str is None: return False, None
-                raw_value = raw_value_str
-            
-            value_str = str(raw_value).strip()
-            if not value_str: 
-                print(f"Error: Multimeter 전압 측정 결과가 비어있습니다.")
-                return False, None
-            value = float(value_str)
-            return True, value
-        except (ValueError, TypeError) as e: 
-            print(f"Error: Multimeter 전압 측정 결과 처리 중 예외 발생: {e} (raw_value: {raw_value})")
+        if not self.is_connected or not self.instrument: 
+            print(f"DEBUG_DMM_MV: Not connected or no instrument. Connected: {self.is_connected}, Instrument: {self.instrument}")
             return False, None
-        except Exception as e: 
-            print(f"Error: Multimeter 전압 측정 중 예외 발생: {e}")
+        
+        raw_value: Any = None
+        print(f"DEBUG_DMM_MV: Attempting to measure voltage...")
+
+        try:
+            # Attempt 1: Use raonpy's built-in measure_voltage if available
+            if hasattr(self.instrument, 'measure_voltage'):
+                print(f"DEBUG_DMM_MV: Attempt 1 - Calling self.instrument.measure_voltage() ({type(self.instrument)})")
+                time.sleep(0.1) # Short delay before measurement
+                raw_value = self.instrument.measure_voltage()
+                print(f"DEBUG_DMM_MV: Raw value from instrument.measure_voltage(): '{raw_value}' (type: {type(raw_value)})")
+
+                if raw_value is not None and str(raw_value).strip():
+                    value = float(str(raw_value).strip())
+                    print(f"DEBUG_DMM_MV: Successfully measured voltage (Attempt 1): {value}")
+                    return True, value
+                else:
+                    print(f"DEBUG_DMM_MV: Attempt 1 (instrument.measure_voltage) returned empty or None. Trying direct GPIB query.")
+
+            # Attempt 2: Direct GPIB query if Attempt 1 failed or self.instrument.measure_voltage doesn't exist
+            print(f"DEBUG_DMM_MV: Attempt 2 - Using direct GPIB query :MEASure:VOLTage:DC?")
+            success_query, query_response_str = self.gpib_query(":MEASure:VOLTage:DC?")
+            print(f"DEBUG_DMM_MV: gpib_query(':MEASure:VOLTage:DC?') result: success={success_query}, response_str='{query_response_str}'")
+
+            if success_query and query_response_str is not None and str(query_response_str).strip():
+                raw_value = query_response_str
+                value_str_cleaned = str(raw_value).strip()
+                # Try to extract a float number, handling potential non-numeric prefixes/suffixes from instrument
+                match = re.search(r"([+\-]?\d+\.\d*E?[+\-]?\d*)", value_str_cleaned)
+                if match:
+                    value = float(match.group(1))
+                    print(f"DEBUG_DMM_MV: Successfully measured voltage (Attempt 2 - Direct Query): {value}")
+                    return True, value
+                else:
+                    print(f"Error: DMM voltage measurement - Could not parse float from direct query response: '{value_str_cleaned}'")
+                    return False, None
+            else:
+                print(f"Error: DMM voltage measurement - Direct GPIB query failed or returned empty/None.")
+                return False, None
+
+        except ValueError as ve:
+            print(f"Error: Multimeter 전압 측정 결과 처리 중 ValueError: {ve} (raw_value: '{raw_value}')")
+            return False, None
+        except Exception as e:
+            print(f"Error: Multimeter 전압 측정 중 예외 발생: {e} (raw_value: '{raw_value}')")
+            import traceback
+            traceback.print_exc()
             return False, None
 
     def measure_current(self) -> tuple[bool, Optional[float]]:
         if not self.is_connected or not self.instrument: return False, None
         raw_value: Any = None
         try:
+            time.sleep(0.1) 
             if hasattr(self.instrument, 'measure_current'):
                 raw_value = self.instrument.measure_current()
             else:
@@ -337,7 +385,7 @@ class Multimeter(GPIBDevice):
             
             value_str = str(raw_value).strip()
             if not value_str:
-                print(f"Error: Multimeter 전류 측정 결과가 비어있습니다.")
+                print(f"Error: Multimeter 전류 측정 결과가 비어있습니다. (raw_value was '{raw_value}')")
                 return False, None
             value = float(value_str)
             return True, value
@@ -349,14 +397,32 @@ class Multimeter(GPIBDevice):
             return False, None
 
     def set_terminal(self, terminal_type_str: str) -> bool:
-        if terminal_type_str.upper() == constants.TERMINAL_FRONT.upper(): 
-            print(f"Info: {self.device_name}은(는) 기본적으로 전면 터미널을 사용합니다.")
-            return True
-        elif terminal_type_str.upper() == constants.TERMINAL_REAR.upper():
-            print(f"Warning: {self.device_name}은(는) 후면 터미널을 지원하지 않거나, SCPI 명령이 없을 수 있습니다.")
-            return False 
+        if not self.is_connected or not self.instrument:
+            print(f"DEBUG_DMM_ST: Not connected or no instrument for set_terminal.")
+            return False
+        
+        cmd = ""
+        # Ensure terminal_type_str is compared against values from constants
+        if terminal_type_str.upper() == constants.TERMINAL_FRONT: # Use constants.TERMINAL_FRONT.upper() if constants.TERMINAL_FRONT is 'FRONT'
+            cmd = "ROUT:TERM FRONT"
+        elif terminal_type_str.upper() == constants.TERMINAL_REAR: # Use constants.TERMINAL_REAR.upper()
+            cmd = "ROUT:TERM REAR"
         else:
-            print(f"Error: 잘못된 터미널 타입입니다: {terminal_type_str}")
+            print(f"Error: Invalid terminal type '{terminal_type_str}' for DMM.")
+            return False
+
+        print(f"DEBUG_DMM_ST: Sending GPIB command: '{cmd}' to DMM")
+        if self.gpib_write(cmd):
+            # As per your snippet, *WAI is used. It ensures the command completes.
+            # However, some drivers might handle this internally or it might interfere.
+            # Let's include it as it was in your reference.
+            self.gpib_write("*WAI") 
+            if terminal_type_str.upper() == constants.TERMINAL_REAR: # Use constants.TERMINAL_REAR.upper()
+                 time.sleep(1) # Specific delay for REAR as per your snippet
+            print(f"DEBUG_DMM_ST: DMM Terminal set to {terminal_type_str.upper()} successfully.")
+            return True
+        else:
+            print(f"Error: Failed to set DMM terminal to {terminal_type_str.upper()}.")
             return False
 
 
@@ -372,7 +438,7 @@ class Sourcemeter(GPIBDevice):
     def set_terminal(self, terminal_type_str: str) -> bool:
         cmd = f":ROUTe:TERMinals {terminal_type_str.upper()}"
         success = self.gpib_write(cmd)
-        if success: time.sleep(0.1) 
+        if success: time.sleep(1.0) # Changed to 1.0s based on reference
         return success
 
     def enable_output(self, state: bool) -> bool:
@@ -403,56 +469,89 @@ class Sourcemeter(GPIBDevice):
 
     def set_protection_current(self, current_limit_amps: float) -> bool:
         if not self.is_connected: return False
-        cmd = f":SENSe:CURRent:PROTection {current_limit_amps:.6e}"
+        cmd = f":SENSe:CURRent:PROTection {current_limit_amps:.6e}" # Keep full word "PROTection" as it's more standard
         return self.gpib_write(cmd)
 
     def _configure_measurement(self, meas_type: str = "VOLT", terminal: str = constants.TERMINAL_FRONT) -> bool:
+        # This method might be simplified or removed if directly using measure_voltage/current from raonpy
         if not self.set_terminal(terminal): return False
         if meas_type.upper() == "VOLT":
-            if not self.gpib_write(":SENSe:FUNCtion 'VOLTage:DC'"): return False
+            if not self.gpib_write(":SENSe:FUNCtion 'VOLTage:DC'"): return False # SCPI standard for sense function
             if not self.gpib_write(":SENSe:VOLTage:DC:NPLCycles 1"): return False 
         elif meas_type.upper() == "CURR":
-            if not self.gpib_write(":SENSe:FUNCtion 'CURRent:DC'"): return False
+            if not self.gpib_write(":SENSe:FUNCtion 'CURRent:DC'"): return False # SCPI standard for sense function
             if not self.gpib_write(":SENSe:CURRent:DC:NPLCycles 1"): return False
         else: 
             print(f"Error: 지원되지 않는 측정 타입입니다: {meas_type}")
             return False
+        # :FORMat:ELEMents is usually for configuring what :READ? or :FETCh? returns.
+        # If using :MEASure:VOLTage? or :MEASure:CURRent?, this might not be strictly necessary
+        # as these commands typically return only the primary measurement.
+        # For now, keeping it for compatibility with potential :READ? usage if raonpy methods are bypassed.
         if not self.gpib_write(f":FORMat:ELEMents {meas_type.upper()}"): return False
         return True
 
     def measure_voltage(self, terminal_type_str: str = constants.TERMINAL_FRONT) -> tuple[bool, Optional[float]]:
-        if not self.is_connected: return False, None
-        if not self._configure_measurement("VOLT", terminal_type_str): return False, None
+        if not self.is_connected or not self.instrument: return False, None
+        if not self.set_terminal(terminal_type_str): # Ensure terminal is set
+            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str})")
+            return False, None
         
-        success_query, response_str = self.gpib_query(":READ?") 
-        if success_query and response_str is not None:
-            try:
-                value_str_clean = response_str.split(',')[0].strip()
+        response_str: Optional[str] = None
+        try:
+            if hasattr(self.instrument, 'measure_voltage'):
+                response_str = self.instrument.measure_voltage() # Use raonpy method
+            else:
+                print("Error: Sourcemeter instrument does not have 'measure_voltage' method.")
+                return False, None
+
+            if response_str is not None:
+                value_str_clean = response_str.split(',')[0].strip() # Keithley typically returns "voltage,current,resistance,..."
                 if not value_str_clean:
                     print(f"Error: Sourcemeter 전압 결과가 비어있습니다.")
                     return False, None
                 value = float(value_str_clean)
                 return True, value
-            except (ValueError, IndexError, TypeError) as e:
-                print(f"Error: Sourcemeter 전압 결과 파싱 오류: '{response_str}' ({e})")
-        return False, None
+            else:
+                print("Error: Sourcemeter 전압 측정 결과가 None입니다.")
+                return False, None
+        except (ValueError, IndexError, TypeError) as e:
+            print(f"Error: Sourcemeter 전압 결과 파싱 오류: '{response_str}' ({e})")
+            return False, None
+        except Exception as e_meas:
+            print(f"Error: Sourcemeter 전압 측정 중 예외 발생: {e_meas}")
+            return False, None
 
     def measure_current(self, terminal_type_str: str = constants.TERMINAL_FRONT) -> tuple[bool, Optional[float]]:
-        if not self.is_connected: return False, None
-        if not self._configure_measurement("CURR", terminal_type_str): return False, None
-        
-        success_query, response_str = self.gpib_query(":READ?") 
-        if success_query and response_str is not None:
-            try:
-                value_str_clean = response_str.split(',')[0].strip()
+        if not self.is_connected or not self.instrument: return False, None
+        if not self.set_terminal(terminal_type_str): # Ensure terminal is set
+            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str})")
+            return False, None
+
+        response_str: Optional[str] = None
+        try:
+            if hasattr(self.instrument, 'measure_current'):
+                response_str = self.instrument.measure_current() # Use raonpy method
+            else:
+                print("Error: Sourcemeter instrument does not have 'measure_current' method.")
+                return False, None
+            
+            if response_str is not None:
+                value_str_clean = response_str.split(',')[0].strip() # Keithley typically returns "current,voltage,resistance,..."
                 if not value_str_clean:
                     print(f"Error: Sourcemeter 전류 결과가 비어있습니다.")
                     return False, None
                 value = float(value_str_clean)
                 return True, value
-            except (ValueError, IndexError, TypeError) as e:
-                print(f"Error: Sourcemeter 전류 결과 파싱 오류: '{response_str}' ({e})")
-        return False, None
+            else:
+                print("Error: Sourcemeter 전류 측정 결과가 None입니다.")
+                return False, None
+        except (ValueError, IndexError, TypeError) as e:
+            print(f"Error: Sourcemeter 전류 결과 파싱 오류: '{response_str}' ({e})")
+            return False, None
+        except Exception as e_meas:
+            print(f"Error: Sourcemeter 전류 측정 중 예외 발생: {e_meas}")
+            return False, None
 
 
 class Chamber(GPIBDevice):

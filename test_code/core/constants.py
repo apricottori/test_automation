@@ -29,9 +29,6 @@ class SequenceActionType(Enum):
     # Chamber Actions
     CHAMBER_SET_TEMPERATURE = "CH_SET_TEMP"
     CHAMBER_CHECK_TEMPERATURE_STABLE = "CH_CHECK_TEMP"
-    # Loop Actions
-    LOOP_START = "LOOP_START"
-    LOOP_END = "LOOP_END"
 
 class SequenceParameterKey(Enum):
     TARGET_NAME = "NAME"
@@ -347,8 +344,6 @@ SEQ_PREFIX_SM_SET_TERMINAL: str = SequenceActionType.SMU_SET_TERMINAL.value
 SEQ_PREFIX_SM_SET_PROTECTION_I: str = SequenceActionType.SMU_SET_PROTECTION_CURRENT.value
 SEQ_PREFIX_CHAMBER_SET_TEMP: str = SequenceActionType.CHAMBER_SET_TEMPERATURE.value
 SEQ_PREFIX_CHAMBER_CHECK_TEMP: str = SequenceActionType.CHAMBER_CHECK_TEMPERATURE_STABLE.value
-SEQ_PREFIX_LOOP_START: str = SequenceActionType.LOOP_START.value
-SEQ_PREFIX_LOOP_END: str = SequenceActionType.LOOP_END.value
 
 SEQ_PARAM_KEY_TARGET_NAME: str = SequenceParameterKey.TARGET_NAME.value
 SEQ_PARAM_KEY_ADDRESS: str = SequenceParameterKey.ADDRESS.value

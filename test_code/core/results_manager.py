@@ -11,8 +11,8 @@ class ResultsManager:
     """
     def __init__(self):
         self.results_data: List[Dict[str, Any]] = []
-        # 기본 컬럼 순서 정의 (Timestamp, Variable Name, Value는 항상 앞쪽에)
-        self.base_columns = ["Timestamp", "Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO]
+        # 기본 컬럼 순서 정의 (Timestamp 제거)
+        self.base_columns = ["Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO]
 
 
     def add_measurement(self,
@@ -74,13 +74,18 @@ class ResultsManager:
         all_keys: List[str] = []
         temp_keys_set: Set[str] = set() # 중복 방지 및 빠른 확인용
 
-        # 기본 컬럼 우선 추가
-        for key in self.base_columns:
-            if key not in temp_keys_set:
-                all_keys.append(key)
-                temp_keys_set.add(key)
+        # 기본 컬럼 우선 추가 (Timestamp 제거)
+        # for key in self.base_columns: # base_columns에 이미 Timestamp 없음
+        #     if key not in temp_keys_set:
+        #         all_keys.append(key)
+        #         temp_keys_set.add(key)
         
-        # 나머지 모든 유니크한 키 추가
+        # "Timestamp"를 명시적으로 추가 (필요하다면, 그러나 기본 base_columns에서는 제거됨)
+        # if "Timestamp" not in temp_keys_set:
+        #    all_keys.append("Timestamp")
+        #    temp_keys_set.add("Timestamp")
+
+        # 나머지 모든 유니크한 키 추가 (base_columns 정의에 따라 동작)
         for record in self.results_data:
             for key in record.keys():
                 if key not in temp_keys_set:
@@ -106,8 +111,8 @@ class ResultsManager:
         all_keys_ordered: List[str] = []
         seen_keys: Set[str] = set()
 
-        # 1. 기본 컬럼 (Timestamp, Variable Name, Value)
-        for key in ["Timestamp", "Variable Name", "Value"]:
+        # 1. 기본 컬럼 (Timestamp 제외, Variable Name, Value)
+        for key in ["Variable Name", "Value"]:
             if key not in seen_keys:
                 all_keys_ordered.append(key)
                 seen_keys.add(key)
@@ -187,9 +192,11 @@ class ResultsManager:
                     # Timestamp 컬럼 포맷팅 (문자열로 변환하여 Excel에 원하는 형식으로 표시)
                     if 'Timestamp' in df_sheet.columns:
                         try:
-                            # 이미 pd.Timestamp 객체이므로 strftime 사용 가능
+                            # 밀리초까지 표시 (소수점 아래 3자리)
                             df_sheet['Timestamp'] = df_sheet['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3]
                         except AttributeError: # 만약 Timestamp가 문자열로 이미 저장되어 있다면 무시
+                            pass
+                        except KeyError: # Timestamp 컬럼이 df_sheet에 없는 경우 (선택 안했을 시)
                             pass
 
 
@@ -219,12 +226,13 @@ if __name__ == '__main__':
     manager.add_measurement("Current_B", 0.005, sample_number="S001", conditions={constants.EXCEL_COL_COND_SMU_V: 1.2, "Custom_Cond": "ModeX"})
     manager.add_measurement("Voltage_A", 1.25, sample_number="S002", conditions={constants.EXCEL_COL_COND_SMU_V: 1.5, constants.EXCEL_COL_COND_CHAMBER_T: 30.0})
     manager.add_measurement("Temp_C", 75.1, conditions={"Other_Info": "Run1"}) # 샘플 번호 없는 경우
+    # manager.add_measurement("Timestamp_Test", "ManualTS", conditions={"Timestamp": "2023-01-01 10:00:00"})
 
     # 2. DataFrame 변환 테스트
     print("\n--- DataFrame 변환 테스트 ---")
     df = manager.get_results_dataframe()
     print(df.to_string())
-    expected_cols = ["Timestamp", "Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO, constants.EXCEL_COL_COND_SMU_V, constants.EXCEL_COL_COND_CHAMBER_T, "Custom_Cond", "Other_Info"]
+    expected_cols = ["Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO, constants.EXCEL_COL_COND_SMU_V, constants.EXCEL_COL_COND_CHAMBER_T, "Custom_Cond", "Other_Info"]
     for col in expected_cols:
         if col in df.columns: # 조건부로 존재할 수 있는 컬럼들
              print(f"Column '{col}' found in DataFrame.")
@@ -240,8 +248,9 @@ if __name__ == '__main__':
     assert constants.EXCEL_COL_COND_SMU_V in available_cols
     assert "Custom_Cond" in available_cols
     assert "Other_Info" in available_cols
-    # 순서 확인 (기본 컬럼들이 앞에 오는지)
-    assert available_cols.index("Timestamp") < available_cols.index(constants.EXCEL_COL_SAMPLE_NO)
+    # 순서 확인 (기본 컬럼들이 앞에 오는지) - Timestamp 제외
+    # assert available_cols.index("Timestamp") < available_cols.index(constants.EXCEL_COL_SAMPLE_NO)
+    assert "Timestamp" not in manager.base_columns # 기본 컬럼에 없는지 확인
 
 
     # 4. Excel 내보내기 테스트
@@ -251,15 +260,15 @@ if __name__ == '__main__':
     sheet_defs = [
         {
             "sheet_name": "Summary",
-            "columns": ["Timestamp", "Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO]
+            "columns": ["Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO] # Timestamp 제거
         },
         {
             "sheet_name": "WithConditions",
-            "columns": ["Timestamp", constants.EXCEL_COL_SAMPLE_NO, "Variable Name", "Value", constants.EXCEL_COL_COND_SMU_V, constants.EXCEL_COL_COND_CHAMBER_T]
+            "columns": [constants.EXCEL_COL_SAMPLE_NO, "Variable Name", "Value", constants.EXCEL_COL_COND_SMU_V, constants.EXCEL_COL_COND_CHAMBER_T] # Timestamp 제거
         },
         {
             "sheet_name": "CustomAndOther", # 존재하지 않는 컬럼은 무시됨
-            "columns": ["Timestamp", constants.EXCEL_COL_SAMPLE_NO, "Custom_Cond", "Other_Info", "NonExistentColumn"]
+            "columns": [constants.EXCEL_COL_SAMPLE_NO, "Custom_Cond", "Other_Info", "NonExistentColumn"] # Timestamp 제거
         },
         { # 컬럼 없는 시트 (건너뛰어야 함)
             "sheet_name": "EmptyCols",

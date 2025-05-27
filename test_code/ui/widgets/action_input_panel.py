@@ -13,6 +13,7 @@ from PyQt5.QtGui import QRegularExpressionValidator, QFont, QDoubleValidator
 from core import constants # constants 모듈 임포트
 from core.helpers import normalize_hex_input
 from core.register_map_backend import RegisterMap
+from core.data_models import SimpleActionItem, LoopActionItem, SequenceItem
 
 
 class ActionInputPanel(QWidget):
@@ -637,7 +638,7 @@ class ActionInputPanel(QWidget):
         
         # DMM 탭
         elif current_tab_index == 1:
-            if not (self.dmm_action_combo and self.dmm_measure_var_name_input and self.dmm_terminal_combo):
+            if not (self.dmm_action_combo and self.dmm_params_stack and self.dmm_measure_var_name_input and self.dmm_terminal_combo): # Reverted check
                 QMessageBox.critical(self, "내부 UI 오류", "DMM 액션 UI 요소 준비 안됨."); return None
             if not self._is_device_enabled(constants.SETTINGS_MULTIMETER_USE_KEY, "Multimeter"): return None
             
@@ -659,9 +660,11 @@ class ActionInputPanel(QWidget):
         
         # SMU 탭
         elif current_tab_index == 2:
-            if not (self.smu_action_combo and self.smu_set_value_input and self.smu_set_terminal_combo and 
+            if not (self.smu_action_combo and self.smu_params_stack and self.smu_set_value_label and # Reverted check
+                    self.smu_set_value_input and self.smu_set_terminal_combo and 
                     self.smu_measure_var_name_input and self.smu_measure_terminal_combo and
-                    self.smu_output_state_combo and self.smu_terminal_combo and self.smu_protection_current_input):
+                    self.smu_output_state_combo and self.smu_terminal_combo and 
+                    self.smu_protection_current_input):
                 QMessageBox.critical(self, "내부 UI 오류", "SMU 액션 UI 요소 준비 안됨."); return None
             if not self._is_device_enabled(constants.SETTINGS_SOURCEMETER_USE_KEY, "Sourcemeter"): return None
             
@@ -707,8 +710,10 @@ class ActionInputPanel(QWidget):
         
         # Chamber 탭
         elif current_tab_index == 3:
-            if not (self.temp_action_combo and self.chamber_set_temp_input and 
-                    self.chamber_check_target_temp_input and self.chamber_check_tolerance_input and
+            if not (self.temp_action_combo and self.temp_params_stack and # Reverted check
+                    self.chamber_set_temp_input and 
+                    self.chamber_check_target_temp_input and 
+                    self.chamber_check_tolerance_input and
                     self.chamber_check_timeout_input):
                 QMessageBox.critical(self, "내부 UI 오류", "Chamber 액션 UI 요소 준비 안됨."); return None
             if not self._is_device_enabled(constants.SETTINGS_CHAMBER_USE_KEY, "Chamber"): return None
@@ -829,38 +834,52 @@ class ActionInputPanel(QWidget):
             if self.i2c_read_name_target_input: self.i2c_read_name_target_input.setCompleter(None)
 
     def update_settings(self, new_settings: Dict[str, Any]):
-        """외부(메인 윈도우)로부터 받은 새 설정으로 내부 상태 및 UI를 업데이트합니다."""
+        """외부(메인 윈도우)로부터 받은 새 설정으로 내부 상태 및 UI를 업데이트합니다.
+           NOTE: Instrument sub-tab enablement is now handled by enable_instrument_sub_tab().
+        """
         self.current_settings = new_settings if new_settings is not None else {}
-        
-        # DMM 탭 활성화/비활성화
-        dmm_enabled = self.current_settings.get(constants.SETTINGS_MULTIMETER_USE_KEY, False)
-        if self.action_group_tabs and self.dmm_tab_widget is not None:
-            dmm_tab_idx = self.action_group_tabs.indexOf(self.dmm_tab_widget)
-            if dmm_tab_idx != -1:
-                self.action_group_tabs.setTabEnabled(dmm_tab_idx, dmm_enabled)
-                # 비활성화된 탭이 현재 선택된 탭이면 첫 번째 탭(I2C)으로 강제 이동
-                if not dmm_enabled and self.action_group_tabs.widget(dmm_tab_idx) == self.action_group_tabs.currentWidget():
-                    self.action_group_tabs.setCurrentIndex(0)
+        # Tab enablement logic is removed from here and moved to enable_instrument_sub_tab
+        print(f"DEBUG_AIP_UpdateSettings: Settings updated. DMM_use: {self.current_settings.get(constants.SETTINGS_MULTIMETER_USE_KEY)}, SMU_use: {self.current_settings.get(constants.SETTINGS_SOURCEMETER_USE_KEY)}, Chamber_use: {self.current_settings.get(constants.SETTINGS_CHAMBER_USE_KEY)}")
+        self._update_active_sub_tab_fields() # Still needed to refresh stacked widget if current tab changes
 
-        # SMU 탭 활성화/비활성화
-        smu_enabled = self.current_settings.get(constants.SETTINGS_SOURCEMETER_USE_KEY, False)
-        if self.action_group_tabs and self.smu_tab_widget is not None:
-            smu_tab_idx = self.action_group_tabs.indexOf(self.smu_tab_widget)
-            if smu_tab_idx != -1:
-                self.action_group_tabs.setTabEnabled(smu_tab_idx, smu_enabled)
-                if not smu_enabled and self.action_group_tabs.widget(smu_tab_idx) == self.action_group_tabs.currentWidget():
-                    self.action_group_tabs.setCurrentIndex(0)
+    def enable_instrument_sub_tab(self, instrument_type: str, enabled: bool):
+        """Enables or disables a specific instrument sub-tab (DMM, SMU, Chamber)."""
+        print(f"DEBUG_AIP: enable_instrument_sub_tab called for '{instrument_type}', enabled: {enabled}")
+        target_tab_widget: Optional[QWidget] = None
+        tab_key_for_log = "Unknown"
 
-        # Chamber 탭 활성화/비활성화
-        chamber_enabled = self.current_settings.get(constants.SETTINGS_CHAMBER_USE_KEY, False)
-        if self.action_group_tabs and self.temp_tab_widget is not None:
-            temp_tab_idx = self.action_group_tabs.indexOf(self.temp_tab_widget)
-            if temp_tab_idx != -1:
-                self.action_group_tabs.setTabEnabled(temp_tab_idx, chamber_enabled)
-                if not chamber_enabled and self.action_group_tabs.widget(temp_tab_idx) == self.action_group_tabs.currentWidget():
-                    self.action_group_tabs.setCurrentIndex(0)
-        
-        self._update_active_sub_tab_fields() # 변경된 설정에 따라 현재 보이는 UI도 업데이트
+        if instrument_type == "DMM":
+            target_tab_widget = self.dmm_tab_widget
+            tab_key_for_log = "DMM"
+        elif instrument_type == "SMU":
+            target_tab_widget = self.smu_tab_widget
+            tab_key_for_log = "SMU"
+        elif instrument_type == "CHAMBER": # Matches signal emission
+            target_tab_widget = self.temp_tab_widget
+            tab_key_for_log = "Chamber"
+        else:
+            print(f"ERROR_AIP: Unknown instrument_type '{instrument_type}' in enable_instrument_sub_tab.")
+            return
+
+        if self.action_group_tabs and target_tab_widget is not None:
+            tab_idx = self.action_group_tabs.indexOf(target_tab_widget)
+            if tab_idx != -1:
+                current_visual_state = self.action_group_tabs.isTabEnabled(tab_idx)
+                print(f"DEBUG_AIP: {tab_key_for_log} sub-tab (idx {tab_idx}) current visual enabled: {current_visual_state}, attempting to set to: {enabled}")
+                self.action_group_tabs.setTabEnabled(tab_idx, enabled)
+                QApplication.processEvents() # Try to force UI update
+                final_visual_state = self.action_group_tabs.isTabEnabled(tab_idx)
+                print(f"VERIFY_AIP_{tab_key_for_log}_TAB_NEW: {tab_key_for_log} tab index {tab_idx} is NOW actually enabled: {final_visual_state} (desired: {enabled})")
+
+                if not enabled and self.action_group_tabs.widget(tab_idx) == self.action_group_tabs.currentWidget():
+                    self.action_group_tabs.setCurrentIndex(0) # Switch to I2C tab
+                    print(f"DEBUG_AIP: {tab_key_for_log} tab was current and disabled, switched to I2C tab.")
+            else:
+                print(f"ERROR_AIP: {tab_key_for_log} tab widget not found in action_group_tabs for enable/disable.")
+        elif not self.action_group_tabs:
+            print("ERROR_AIP: self.action_group_tabs is None in enable_instrument_sub_tab.")
+        elif target_tab_widget is None:
+             print(f"ERROR_AIP: target_tab_widget for {instrument_type} is None in enable_instrument_sub_tab.")
 
     def update_register_map(self, new_register_map: Optional[RegisterMap]):
         """외부(메인 윈도우)로부터 받은 새 레지스터 맵으로 내부 상태를 업데이트합니다."""
@@ -872,3 +891,106 @@ class ActionInputPanel(QWidget):
             self.completer_model.setStringList([])
             
         print("ActionInputPanel: RegisterMap updated.")
+
+    def load_action_data_for_editing(self, action_data: SimpleActionItem):
+        """주어진 SimpleActionItem 데이터로 입력 패널 필드를 채웁니다."""
+        action_type_prefix = action_data.get("action_type")
+        params = action_data.get("parameters", {})
+
+        # 1. 적절한 메인 탭 선택 (I2C, DMM, SMU, Temp)
+        target_tab_widget: Optional[QWidget] = None
+        target_action_combo: Optional[QComboBox] = None
+        action_text_to_select: Optional[str] = None
+
+        # I2C/Delay 액션에 대한 매핑 (상수 값 기준)
+        i2c_action_map = {
+            constants.SEQ_PREFIX_I2C_WRITE_NAME: (self.i2c_tab_widget, self.i2c_action_combo, constants.ACTION_I2C_WRITE_NAME),
+            constants.SEQ_PREFIX_I2C_WRITE_ADDR: (self.i2c_tab_widget, self.i2c_action_combo, constants.ACTION_I2C_WRITE_ADDR),
+            constants.SEQ_PREFIX_I2C_READ_NAME: (self.i2c_tab_widget, self.i2c_action_combo, constants.ACTION_I2C_READ_NAME),
+            constants.SEQ_PREFIX_I2C_READ_ADDR: (self.i2c_tab_widget, self.i2c_action_combo, constants.ACTION_I2C_READ_ADDR),
+            constants.SEQ_PREFIX_DELAY: (self.i2c_tab_widget, self.i2c_action_combo, constants.ACTION_DELAY),
+        }
+        dmm_action_map = {
+            constants.SEQ_PREFIX_MM_MEAS_V: (self.dmm_tab_widget, self.dmm_action_combo, constants.ACTION_MM_MEAS_V),
+            constants.SEQ_PREFIX_MM_MEAS_I: (self.dmm_tab_widget, self.dmm_action_combo, constants.ACTION_MM_MEAS_I),
+            constants.SEQ_PREFIX_MM_SET_TERMINAL: (self.dmm_tab_widget, self.dmm_action_combo, constants.ACTION_MM_SET_TERMINAL),
+        }
+        smu_action_map = {
+            constants.SEQ_PREFIX_SM_SET_V: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_SET_V),
+            constants.SEQ_PREFIX_SM_SET_I: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_SET_I),
+            constants.SEQ_PREFIX_SM_MEAS_V: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_MEAS_V),
+            constants.SEQ_PREFIX_SM_MEAS_I: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_MEAS_I),
+            constants.SEQ_PREFIX_SM_ENABLE_OUTPUT: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_ENABLE_OUTPUT),
+            constants.SEQ_PREFIX_SM_SET_TERMINAL: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_SET_TERMINAL),
+            constants.SEQ_PREFIX_SM_SET_PROTECTION_I: (self.smu_tab_widget, self.smu_action_combo, constants.ACTION_SM_SET_PROTECTION_I),
+        }
+        temp_action_map = {
+            constants.SEQ_PREFIX_CHAMBER_SET_TEMP: (self.temp_tab_widget, self.temp_action_combo, constants.ACTION_CHAMBER_SET_TEMP),
+            constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP: (self.temp_tab_widget, self.temp_action_combo, constants.ACTION_CHAMBER_CHECK_TEMP),
+        }
+
+        found_map_entry = None
+        if action_type_prefix in i2c_action_map: found_map_entry = i2c_action_map[action_type_prefix]
+        elif action_type_prefix in dmm_action_map: found_map_entry = dmm_action_map[action_type_prefix]
+        elif action_type_prefix in smu_action_map: found_map_entry = smu_action_map[action_type_prefix]
+        elif action_type_prefix in temp_action_map: found_map_entry = temp_action_map[action_type_prefix]
+
+        if found_map_entry and self.action_group_tabs:
+            target_tab_widget, target_action_combo, action_text_to_select = found_map_entry
+            if target_tab_widget and target_action_combo:
+                tab_index = self.action_group_tabs.indexOf(target_tab_widget)
+                if tab_index != -1:
+                    self.action_group_tabs.setCurrentIndex(tab_index)
+                    combo_idx = target_action_combo.findText(action_text_to_select)
+                    if combo_idx != -1: target_action_combo.setCurrentIndex(combo_idx)
+        else:
+            QMessageBox.warning(self, "Error", f"Cannot load action type '{action_type_prefix}' into input panel.")
+            return
+
+        # 2. 파라미터 값 채우기 (선택된 탭과 액션에 따라)
+        # I2C/Delay
+        if target_tab_widget == self.i2c_tab_widget:
+            if action_type_prefix == constants.SEQ_PREFIX_I2C_WRITE_NAME and self.i2c_write_name_target_input and self.i2c_write_name_value_input:
+                self.i2c_write_name_target_input.setText(params.get(constants.SEQ_PARAM_KEY_TARGET_NAME, ''))
+                self.i2c_write_name_value_input.setText(params.get(constants.SEQ_PARAM_KEY_VALUE, ''))
+            elif action_type_prefix == constants.SEQ_PREFIX_I2C_WRITE_ADDR and self.i2c_write_addr_target_input and self.i2c_write_addr_value_input:
+                self.i2c_write_addr_target_input.setText(params.get(constants.SEQ_PARAM_KEY_ADDRESS, ''))
+                self.i2c_write_addr_value_input.setText(params.get(constants.SEQ_PARAM_KEY_VALUE, ''))
+            elif action_type_prefix == constants.SEQ_PREFIX_I2C_READ_NAME and self.i2c_read_name_target_input and self.i2c_read_name_var_name_input:
+                self.i2c_read_name_target_input.setText(params.get(constants.SEQ_PARAM_KEY_TARGET_NAME, ''))
+                self.i2c_read_name_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+            elif action_type_prefix == constants.SEQ_PREFIX_I2C_READ_ADDR and self.i2c_read_addr_target_input and self.i2c_read_addr_var_name_input:
+                self.i2c_read_addr_target_input.setText(params.get(constants.SEQ_PARAM_KEY_ADDRESS, ''))
+                self.i2c_read_addr_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+            elif action_type_prefix == constants.SEQ_PREFIX_DELAY and self.delay_seconds_input:
+                self.delay_seconds_input.setValue(float(params.get(constants.SEQ_PARAM_KEY_SECONDS, 0.01)))
+        # DMM
+        elif target_tab_widget == self.dmm_tab_widget:
+            if action_type_prefix in [constants.SEQ_PREFIX_MM_MEAS_V, constants.SEQ_PREFIX_MM_MEAS_I] and self.dmm_measure_var_name_input:
+                self.dmm_measure_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+            elif action_type_prefix == constants.SEQ_PREFIX_MM_SET_TERMINAL and self.dmm_terminal_combo:
+                self.dmm_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
+        # SMU
+        elif target_tab_widget == self.smu_tab_widget:
+            if action_type_prefix in [constants.SEQ_PREFIX_SM_SET_V, constants.SEQ_PREFIX_SM_SET_I] and self.smu_set_value_input and self.smu_set_terminal_combo:
+                self.smu_set_value_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
+                self.smu_set_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
+            elif action_type_prefix in [constants.SEQ_PREFIX_SM_MEAS_V, constants.SEQ_PREFIX_SM_MEAS_I] and self.smu_measure_var_name_input and self.smu_measure_terminal_combo:
+                self.smu_measure_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+                self.smu_measure_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
+            elif action_type_prefix == constants.SEQ_PREFIX_SM_ENABLE_OUTPUT and self.smu_output_state_combo:
+                self.smu_output_state_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_STATE, constants.BOOL_TRUE))
+            elif action_type_prefix == constants.SEQ_PREFIX_SM_SET_TERMINAL and self.smu_terminal_combo:
+                self.smu_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
+            elif action_type_prefix == constants.SEQ_PREFIX_SM_SET_PROTECTION_I and self.smu_protection_current_input:
+                 self.smu_protection_current_input.setText(str(params.get(constants.SEQ_PARAM_KEY_CURRENT_LIMIT, '')))
+        # Temp
+        elif target_tab_widget == self.temp_tab_widget:
+            if action_type_prefix == constants.SEQ_PREFIX_CHAMBER_SET_TEMP and self.chamber_set_temp_input:
+                self.chamber_set_temp_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
+            elif action_type_prefix == constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP and self.chamber_check_target_temp_input and self.chamber_check_tolerance_input and self.chamber_check_timeout_input:
+                self.chamber_check_target_temp_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
+                self.chamber_check_tolerance_input.setText(str(params.get(constants.SEQ_PARAM_KEY_TOLERANCE, constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG)))
+                self.chamber_check_timeout_input.setText(str(params.get(constants.SEQ_PARAM_KEY_TIMEOUT, constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC)))
+
+        self._update_active_sub_tab_fields() # StackedWidget 페이지 업데이트 강제

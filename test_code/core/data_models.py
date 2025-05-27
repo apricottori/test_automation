@@ -1,5 +1,5 @@
 # data_models.py
-from typing import List, Tuple, TypedDict, Optional # Optional 추가
+from typing import List, Tuple, TypedDict, Optional, Dict, Any, Union, Literal
 
 class LogicalFieldInfo(TypedDict):
     """
@@ -74,3 +74,42 @@ class AddressBitMapping(TypedDict):
 #     },
 #     # ... other fields or parts of fields in address 0x0000
 # ] 
+
+# --- Sequence Item Data Models (Proposal 2) ---
+class SimpleActionItem(TypedDict):
+    item_id: str  # Unique ID for UI management
+    action_type: str # e.g., constants.SEQ_PREFIX_I2C_WRITE_NAME
+    parameters: Dict[str, Any] # Parsed parameters, e.g., {\"NAME\": \"CTRL_REG\", \"VAL\": \"0xFF\"}
+    display_name: Optional[str] # For UI
+
+class LoopActionItem(TypedDict):
+    item_id: str
+    action_type: Literal["Loop"] # Special type
+    loop_variable_name: Optional[str] # Name of the variable being swept (e.g., \"Temperature\", \"VDD_Voltage\") - Optional if count-based
+    start_value: Optional[Any] # Can be float, int. Optional if count-based.
+    stop_value: Optional[Any] # Optional if count-based.
+    step_value: Optional[Any] # Optional if count-based.
+    loop_count: Optional[int] # For fixed count loops. If present, start/stop/step might be ignored.
+    looped_actions: List[Union['SimpleActionItem', 'LoopActionItem']] # Recursive definition for nested loops. Forward reference.
+    display_name: Optional[str] # UI display, e.g., \"Loop: Temperature 25-85C step 10\"
+
+SequenceItem = Union[SimpleActionItem, LoopActionItem]
+# --- End of Sequence Item Data Models ---
+
+class ExcelSheetConfig(TypedDict):
+    """엑셀 시트 설정을 위한 데이터 모델"""
+    sheet_name: str                       # 고정 시트 이름
+    dynamic_naming: Optional[bool]        # 동적 시트 이름 사용 여부
+    dynamic_name_field: Optional[str]     # 동적 시트 이름에 사용할 필드
+    dynamic_name_prefix: Optional[str]    # 동적 시트 이름 접두사
+    
+    index_fields: List[str]               # 행으로 사용할 필드 리스트
+    column_fields: List[str]              # 열로 사용할 필드 리스트
+    value_field: str                      # 값으로 사용할 필드
+    
+    index_filters: Dict[str, List[Any]]   # 인덱스 필드별 필터 값 목록
+    column_filters: Dict[str, List[Any]]  # 컬럼 필드별 필터 값 목록
+    global_filters: Dict[str, Any]        # 전역 필터 조건
+    
+    transpose: bool                       # 행/열 전환 여부
+    aggfunc: str                          # 집계 함수 (mean, max, min, first, last 등) 

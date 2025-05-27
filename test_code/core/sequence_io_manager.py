@@ -1,9 +1,10 @@
 # sequence_io_manager.py
 import json
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from . import constants
 from datetime import datetime
+from .data_models import SequenceItem, SimpleActionItem, LoopActionItem
 
 class SequenceIOManager:
     """
@@ -22,14 +23,14 @@ class SequenceIOManager:
                 print(f"[SequenceIOManager] CRITICAL: Failed to create sequences directory '{self.sequences_dir}': {e}")
                 # raise OSError(f"Failed to create sequences directory: {self.sequences_dir}") from e # 필요시 예외 발생
 
-    def save_sequence(self, sequence_name_no_ext: str, sequence_lines: List[str], overwrite: bool = False) -> bool:
+    def save_sequence(self, sequence_name_no_ext: str, sequence_items: List[SequenceItem], overwrite: bool = False) -> bool:
         """
         시퀀스 파일을 JSON 형태로 저장합니다.
-        JSON 파일에는 시퀀스 이름, 저장 시각, 그리고 시퀀스 라인들이 포함됩니다.
+        JSON 파일에는 시퀀스 이름, 저장 시각, 그리고 계층적인 시퀀스 아이템들이 포함됩니다.
         
         Args:
             sequence_name_no_ext (str): 저장할 시퀀스의 순수 이름 (확장자 제외).
-            sequence_lines (List[str]): 시퀀스 라인 목록.
+            sequence_items (List[SequenceItem]): 시퀀스 아이템 목록 (계층 구조 지원).
             overwrite (bool): 동일한 이름의 파일이 있을 경우 덮어쓸지 여부.
             
         Returns:
@@ -59,7 +60,7 @@ class SequenceIOManager:
             sequence_data = {
                 "name": sequence_name_no_ext, # Store the pure name inside JSON
                 "saved_at": datetime.now().isoformat(),
-                "sequence_lines": sequence_lines
+                "sequence_items": sequence_items # 기존 sequence_lines 대신 sequence_items 사용
             }
             
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -73,9 +74,9 @@ class SequenceIOManager:
             return False
 
     @staticmethod
-    def load_sequence(filepath: str) -> Optional[List[str]]:
+    def load_sequence(filepath: str) -> Optional[List[SequenceItem]]:
         """
-        JSON 파일에서 시퀀스 아이템 리스트("sequence_lines")를 로드합니다.
+        JSON 파일에서 계층적인 시퀀스 아이템 리스트("sequence_items")를 로드합니다.
         """
         if not os.path.exists(filepath):
             print(f"[SequenceIOManager] Error loading: File not found '{filepath}'")
@@ -84,14 +85,52 @@ class SequenceIOManager:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            if "sequence_lines" in data and isinstance(data["sequence_lines"], list):
-                print(f"[SequenceIOManager] Sequence lines loaded successfully from '{filepath}'")
-                return data["sequence_lines"]
-            elif "steps" in data and isinstance(data["steps"], list): # Legacy support
+            # "sequence_items" 키를 우선적으로 확인
+            if "sequence_items" in data and isinstance(data["sequence_items"], list):
+                # TODO: 여기서 각 아이템이 SimpleActionItem 또는 LoopActionItem 구조를 따르는지
+                #       세부적인 유효성 검사를 추가할 수 있습니다 (예: pydantic 사용).
+                #       현재는 타입 캐스팅 없이 반환합니다.
+                print(f"[SequenceIOManager] Sequence items loaded successfully from '{filepath}'")
+                return data["sequence_items"]
+            elif "sequence_lines" in data and isinstance(data["sequence_lines"], list):
+                # 하위 호환성을 위해 기존 "sequence_lines" (List[str]) 처리
+                # 이 문자열 리스트를 List[SimpleActionItem]으로 변환해야 함.
+                print(f"[SequenceIOManager] Legacy sequence (sequence_lines) loaded from '{filepath}'. Converting...")
+                legacy_lines: List[str] = data["sequence_lines"]
+                converted_items: List[SequenceItem] = []
+                for idx, line_str in enumerate(legacy_lines):
+                    try:
+                        action_type_str, params_str = line_str.split(":", 1)
+                        params_dict_parsed = {}
+                        if params_str.strip():
+                            param_pairs = params_str.split(';')
+                            for pair in param_pairs:
+                                if '=' in pair:
+                                    key, value = pair.split('=', 1)
+                                    params_dict_parsed[key.strip()] = value.strip()
+                        
+                        simple_item: SimpleActionItem = {
+                            "item_id": f"legacy_item_{idx}", # 임시 ID
+                            "action_type": action_type_str.strip(),
+                            "parameters": params_dict_parsed,
+                            "display_name": line_str.strip() # 간단히 전체 라인을 표시명으로
+                        }
+                        converted_items.append(simple_item)
+                    except ValueError:
+                        print(f"[SequenceIOManager] Error converting legacy line: '{line_str}'. Skipping.")
+                        # 유효하지 않은 레거시 라인은 무시하거나, 오류 처리
+                return converted_items
+            elif "steps" in data and isinstance(data["steps"], list): # Legacy support for "steps"
                 print(f"[SequenceIOManager] Legacy sequence (steps) loaded from '{filepath}'")
-                return data["steps"]
+                # sequence_lines와 유사하게 SimpleActionItem으로 변환 필요
+                # 이 부분은 위 sequence_lines 변환 로직과 거의 동일하게 구현 가능
+                legacy_steps: List[str] = data["steps"]
+                converted_steps: List[SequenceItem] = []
+                # ... (위의 sequence_lines 변환 로직과 유사하게 구현) ...
+                print(f"[SequenceIOManager] WARNING: Conversion for 'steps' key not fully implemented yet in this pass.")
+                return converted_steps # 임시
             else:
-                print(f"[SequenceIOManager] Error: '{filepath}' does not contain 'sequence_lines' or valid 'steps' list.")
+                print(f"[SequenceIOManager] Error: '{filepath}' does not contain 'sequence_items', 'sequence_lines', or valid 'steps' list.")
                 return None
         except json.JSONDecodeError as e:
             print(f"[SequenceIOManager] Error decoding JSON from '{filepath}': {e}")

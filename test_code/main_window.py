@@ -20,6 +20,7 @@ from ui.tabs.settings_tab import SettingsTab
 from ui.tabs.reg_viewer_tab import RegisterViewerTab
 from ui.tabs.results_viewer_tab import ResultsViewerTab
 from ui.tabs.sequence_controller_tab import SequenceControllerTab
+from core.excel_exporter import ExcelExporter
 
 import pandas as pd
 
@@ -313,27 +314,38 @@ class RegMapWindow(QMainWindow):
 
     def _init_i2c_device(self):
         """I2C 장치를 설정값에 따라 초기화합니다."""
-        # 사용자 제공 코드의 로직 유지
-        chip_id_from_settings_tab = None
-        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'get_current_chip_id_input'):
-            chip_id_from_settings_tab = self.tab_settings_widget.get_current_chip_id_input()
+        chip_id_str_to_use = ""
+        # SettingsTab UI의 현재 Chip ID 값을 우선적으로 사용
+        if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'chip_id_input') and self.tab_settings_widget.chip_id_input:
+            chip_id_str_to_use = self.tab_settings_widget.chip_id_input.text().strip()
+            if chip_id_str_to_use:
+                print(f"DEBUG_MW: Using Chip ID from SettingsTab UI for _init_i2c_device: '{chip_id_str_to_use}'")
 
-        chip_id = chip_id_from_settings_tab if chip_id_from_settings_tab else self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "")
-        if chip_id:
-            # I2CDevice 생성자에 chip_id_str 대신 chip_id 전달 (사용자 제공 코드 기준)
-            self.i2c_device = I2CDevice(chip_id_str=chip_id) # chip_id -> chip_id_str
+        # UI에서 가져온 Chip ID가 없으면 저장된 설정에서 가져옴
+        if not chip_id_str_to_use:
+            chip_id_str_to_use = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "")
+            if chip_id_str_to_use:
+                print(f"DEBUG_MW: Using Chip ID from saved current_settings for _init_i2c_device: '{chip_id_str_to_use}'")
+
+        if chip_id_str_to_use:
+            self.i2c_device = I2CDevice(chip_id_str=chip_id_str_to_use) # 새 인스턴스 생성
             if self.i2c_device and self.i2c_device.is_opened:
-                if hasattr(self.i2c_device, 'change_port'):
-                    if not self.i2c_device.change_port(0):
-                         print("Warning: I2C 포트 변경(0) 실패.")
+                print(f"DEBUG_MW: I2C device initialized and opened successfully with ID: {chip_id_str_to_use}")
+                # change_port는 필요시 호출. 여기서는 EVB 연결 확인이 주 목적.
+                # if hasattr(self.i2c_device, 'change_port'):
+                #     if not self.i2c_device.change_port(0):
+                #          print("Warning: I2C 포트 변경(0) 실패.")
             elif self.i2c_device and not self.i2c_device.is_opened:
-                QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id}) 연결 실패. EVB 상태를 확인하세요.")
-                self.i2c_device = None
-            elif not self.i2c_device:
-                 QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id}) 초기화 실패 (객체 생성 실패).")
+                QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id_str_to_use}) 연결 실패. EVB 상태를 확인하세요.")
+                self.i2c_device = None # 연결 실패 시 명확히 None으로 설정
+            elif not self.i2c_device: # I2CDevice 생성자에서 문제가 발생하여 None이 반환된 경우 (드문 경우)
+                 QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id_str_to_use}) 초기화 중 객체 생성 실패.")
+                 self.i2c_device = None # 초기화 실패 시 명확히 None으로 설정
         else:
-            print("Info: Chip ID가 설정되지 않아 I2C 장치를 초기화하지 않습니다.")
-            self.i2c_device = None
+            print("Info_MW: Chip ID가 설정되지 않아 I2C 장치를 초기화하지 않습니다.")
+            self.i2c_device = None # Chip ID 없으면 명확히 None으로 설정
+            # 사용자에게 Chip ID가 없음을 알릴 수 있습니다.
+            # QMessageBox.information(self, "알림", "Chip ID가 설정되지 않았습니다. Settings 탭에서 설정해주세요.")
 
     def _init_multimeter(self):
         """멀티미터를 설정값에 따라 초기화합니다."""
@@ -478,12 +490,13 @@ class RegMapWindow(QMainWindow):
         )
         if self.tab_settings_widget:
             self.tab_settings_widget.settings_changed_signal.connect(self._handle_settings_changed)
-            # 사용자 제공 코드의 시그널 이름 evb_check_requested_signal 사용
-            if hasattr(self.tab_settings_widget, 'evb_check_requested_signal'):
-                self.tab_settings_widget.evb_check_requested_signal.connect(self._handle_evb_check_request) # 사용자 제공 코드의 슬롯명
-            # reinitialize_hardware_requested 시그널도 SettingsTab에 있다면 연결
+            if hasattr(self.tab_settings_widget, 'check_evb_connection_requested'): # Corrected signal name here
+                self.tab_settings_widget.check_evb_connection_requested.connect(self._handle_evb_check_request)
             if hasattr(self.tab_settings_widget, 'reinitialize_hardware_requested'):
                  self.tab_settings_widget.reinitialize_hardware_requested.connect(self._initialize_hardware_from_settings)
+            # Connect the new signal
+            if hasattr(self.tab_settings_widget, 'instrument_enable_changed_signal'):
+                self.tab_settings_widget.instrument_enable_changed_signal.connect(self._handle_instrument_enable_changed)
 
             self.tabs.addTab(self.tab_settings_widget, constants.TAB_SETTINGS_TITLE)
         
@@ -587,28 +600,51 @@ class RegMapWindow(QMainWindow):
 
     @pyqtSlot()
     def _handle_evb_check_request(self): # 사용자 제공 코드의 슬롯명
-        print("DEBUG: EVB connection check requested by user.")
+        print("DEBUG_MW: EVB connection check requested by user.")
         if self.statusBar(): self.statusBar().showMessage("EVB 연결 상태 확인 중...", 2000)
 
         if self.i2c_device:
             self.i2c_device.close()
             self.i2c_device = None
+            print("DEBUG_MW: Existing I2C device closed and cleared.")
         
-        self._init_i2c_device()
+        self._init_i2c_device() # 수정된 _init_i2c_device 호출
 
         if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'update_evb_status'): # 이름 수정
-            message_detail = "Unknown"
-            if self.i2c_device and self.i2c_device.is_opened and hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id:
-                message_detail = f"ID: {self.i2c_device.chip_id:#04X}"
-            elif hasattr(self.tab_settings_widget, 'get_current_chip_id_input'): # SettingsTab에 해당 메소드가 있다고 가정
-                chip_id_ui = self.tab_settings_widget.get_current_chip_id_input()
-                if chip_id_ui: message_detail = f"Attempted ID: {chip_id_ui}"
-                elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY): # UI에 없으면 current_settings에서 가져옴
-                    message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
-            elif self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY):
-                 message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
+            message_detail = ""
+            attempted_chip_id_for_msg = ""
+            # 메시지용 Chip ID 결정 (UI 우선, 다음 설정값)
+            if self.tab_settings_widget and hasattr(self.tab_settings_widget, 'chip_id_input') and self.tab_settings_widget.chip_id_input:
+                attempted_chip_id_for_msg = self.tab_settings_widget.chip_id_input.text().strip()
+            if not attempted_chip_id_for_msg:
+                attempted_chip_id_for_msg = self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY, "N/A")
 
-            self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, message_detail)
+
+            if self.i2c_device and self.i2c_device.is_opened:
+                actual_connected_id_str = "Unknown"
+                if hasattr(self.i2c_device, 'chip_id') and self.i2c_device.chip_id is not None:
+                    try:
+                        if isinstance(self.i2c_device.chip_id, int):
+                            actual_connected_id_str = f"{self.i2c_device.chip_id:#04X}"
+                        else: # I2CDevice.chip_id가 int가 아닌 경우 (현재 로직상으로는 int여야 함)
+                            actual_connected_id_str = str(self.i2c_device.chip_id)
+                    except Exception as e_fmt:
+                        print(f"Error formatting chip_id for EVB status: {e_fmt}")
+                        actual_connected_id_str = str(self.i2c_device.chip_id) + " (format err)"
+                message_detail = f"ID: {actual_connected_id_str} (Connected)"
+            else:
+                # 연결 실패 또는 장치 없음
+                status_reason = "연결 실패"
+                if not attempted_chip_id_for_msg or attempted_chip_id_for_msg == "N/A":
+                    status_reason = "Chip ID 없음"
+                elif self.i2c_device is None and chip_id_str_to_use: # _init_i2c_device에서 ID는 있었으나 인스턴스 생성 실패
+                    status_reason = "초기화 실패"
+
+                message_detail = f"Attempted ID: {attempted_chip_id_for_msg} ({status_reason})"
+            
+            is_actually_connected = self.i2c_device is not None and self.i2c_device.is_opened
+            self.tab_settings_widget.update_evb_status(is_actually_connected, message_detail)
+            print(f"DEBUG_MW: Sent to SettingsTab.update_evb_status: connected={is_actually_connected}, msg='{message_detail}'")
 
         if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
             self.tab_sequence_controller_widget.update_hardware_instances(
@@ -678,9 +714,21 @@ class RegMapWindow(QMainWindow):
                self.tab_sequence_controller_widget.execution_log_textedit is not None:
                 self.tab_sequence_controller_widget.execution_log_textedit.append("--- 모든 측정 결과가 초기화되었습니다. ---")
 
-    @pyqtSlot(str, list)
+    @pyqtSlot(str, list) # sheet_definitions 타입이 List[ExcelSheetConfig] 여야 함
     def _handle_export_excel(self, file_path: str, sheet_definitions: List[Dict[str,Any]]):
-        if self.results_manager and self.results_manager.export_to_excel(file_path, sheet_definitions): # None 체크
+        if not self.results_manager:
+            QMessageBox.critical(self, "Error", "ResultsManager is not initialized.")
+            return
+
+        results_df = self.results_manager.get_results_dataframe()
+        if results_df.empty:
+            QMessageBox.information(self, "No Data", "내보낼 결과 데이터가 없습니다.")
+            return
+
+        exporter = ExcelExporter(results_df)
+        # sheet_definitions가 List[ExcelSheetConfig] 타입이라고 가정.
+        # ExcelExportSettingsDialog.get_final_sheet_configs()가 이 타입을 반환해야 함.
+        if exporter.export_to_excel(file_path, sheet_definitions): 
             QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, f"결과가 '{file_path}'에 저장되었습니다.")
         else:
             QMessageBox.warning(self, constants.MSG_TITLE_ERROR, "Excel 파일 저장에 실패했습니다. 로그를 확인하세요.")
@@ -844,6 +892,53 @@ class RegMapWindow(QMainWindow):
             if hasattr(self.chamber, 'disconnect'): self.chamber.disconnect()
 
         event.accept()
+
+    # New slot to handle instrument enable/disable changes
+    @pyqtSlot(str, bool)
+    def _handle_instrument_enable_changed(self, instrument_type: str, enabled: bool):
+        print(f"DEBUG_MW: _handle_instrument_enable_changed: Instrument '{instrument_type}' state: {enabled}")
+        
+        # Update overall SequenceControllerTab enabled state
+        if self.tabs and self.tab_sequence_controller_widget:
+            current_settings = self.settings_manager.load_settings() # Get fresh settings
+            dmm_on = current_settings.get(constants.SETTINGS_MULTIMETER_USE_KEY, False)
+            smu_on = current_settings.get(constants.SETTINGS_SOURCEMETER_USE_KEY, False)
+            chamber_on = current_settings.get(constants.SETTINGS_CHAMBER_USE_KEY, False)
+            
+            any_instrument_on = dmm_on or smu_on or chamber_on
+            reg_map_loaded = bool(self.register_map and self.register_map.logical_fields_map) # Check if regmap is loaded and has fields
+            
+            # Main Sequence Tab is enabled if any instrument is on AND a register map is loaded.
+            # Or, if you want to allow sequence editing even without a regmap for some cases (e.g. delay only sequences),
+            # you might change this logic, e.g., main_seq_tab_should_be_enabled = any_instrument_on or reg_map_loaded (if you want it enabled if either is true)
+            # For now, let's stick to: it must have an instrument AND a regmap to be useful for most instrument actions.
+            # However, the user wants the tab active if ANY instrument is active, regardless of regmap for now.
+            main_seq_tab_should_be_enabled = any_instrument_on
+            if not reg_map_loaded and any_instrument_on:
+                 print("DEBUG_MW: An instrument is enabled, but no register map is loaded. Sequence tab will be enabled, but I2C actions might fail.")
+            # If no instrument is selected, the main sequence tab should be disabled if it was only enabled due to instruments.
+            # If it was enabled due to a loaded regmap (for I2C actions), it should remain enabled if regmap is still loaded.
+            # This simplifies to: enable if any instrument OR regmap is loaded.
+            # Let's refine: Enable if (any instrument is on) OR (regmap is loaded and NO instruments are on, allowing I2C/Delay only sequences)
+            # For now, let's try: Enable if any instrument is on. If no instruments are on, its state depends on whether a regmap is loaded (for I2C/Delay).
+
+            if any_instrument_on:
+                main_seq_tab_should_be_enabled = True
+            elif reg_map_loaded: # No instruments, but regmap is loaded (allow I2C/Delay)
+                main_seq_tab_should_be_enabled = True 
+            else: # No instruments and no regmap
+                main_seq_tab_should_be_enabled = False
+
+            seq_tab_idx = self.tabs.indexOf(self.tab_sequence_controller_widget)
+            if seq_tab_idx != -1:
+                print(f"DEBUG_MW: Main Sequence Tab current enabled: {self.tabs.isTabEnabled(seq_tab_idx)}, calculated should be: {main_seq_tab_should_be_enabled} (any_instr_on: {any_instrument_on}, regmap_loaded: {reg_map_loaded})")
+                self.tabs.setTabEnabled(seq_tab_idx, main_seq_tab_should_be_enabled)
+
+        # Propagate to SequenceControllerTab to manage its internal (ActionInputPanel) tabs
+        if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'set_instrument_tab_enabled'):
+            self.tab_sequence_controller_widget.set_instrument_tab_enabled(instrument_type, enabled)
+        else:
+            print(f"DEBUG_MW: SequenceControllerTab or set_instrument_tab_enabled method not found.")
 
 if __name__ == '__main__':
     print("main_window.py is not intended to be run directly. Run main_app.py instead.")

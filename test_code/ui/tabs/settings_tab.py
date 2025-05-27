@@ -22,6 +22,7 @@ class SettingsTab(QWidget):
     settings_changed_signal = pyqtSignal(dict)
     check_evb_connection_requested = pyqtSignal()
     reinitialize_hardware_requested = pyqtSignal(dict)
+    instrument_enable_changed_signal = pyqtSignal(str, bool)
 
     def __init__(self,
                  settings_manager_instance: SettingsManager,
@@ -106,7 +107,6 @@ class SettingsTab(QWidget):
         self.check_evb_button = QPushButton(constants.SETTINGS_EVB_BTN_CHECK_TEXT, evb_group_box)
         if self.check_evb_button:
              self.check_evb_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload)) # 아이콘 추가
-             # self.check_evb_button.clicked.connect(self.check_evb_connection_requested.emit) # 연결은 _connect_signals에서
         layout.addWidget(self.check_evb_button, 2, 0, 1, 2, Qt.AlignCenter) # 버튼을 가운데 정렬
 
         return evb_group_box
@@ -225,17 +225,19 @@ class SettingsTab(QWidget):
         if hasattr(self, 'save_settings_button') and self.save_settings_button:
             self.save_settings_button.clicked.connect(self._save_settings_and_notify)
         
-        # check_evb_button 시그널 연결 복원
         if hasattr(self, 'check_evb_button') and self.check_evb_button:
             self.check_evb_button.clicked.connect(self.check_evb_connection_requested.emit)
         
-        # 체크박스 상태 변경 시 연결 (update_instrument_fields_enabled_state 호출)
+        # 체크박스 상태 변경 시 연결
         if hasattr(self, 'use_multimeter_checkbox') and self.use_multimeter_checkbox:
             self.use_multimeter_checkbox.stateChanged.connect(self.update_instrument_fields_enabled_state)
+            self.use_multimeter_checkbox.toggled.connect(lambda checked: self.instrument_enable_changed_signal.emit("DMM", checked))
         if hasattr(self, 'use_sourcemeter_checkbox') and self.use_sourcemeter_checkbox:
             self.use_sourcemeter_checkbox.stateChanged.connect(self.update_instrument_fields_enabled_state)
+            self.use_sourcemeter_checkbox.toggled.connect(lambda checked: self.instrument_enable_changed_signal.emit("SMU", checked))
         if hasattr(self, 'use_chamber_checkbox') and self.use_chamber_checkbox:
             self.use_chamber_checkbox.stateChanged.connect(self.update_instrument_fields_enabled_state)
+            self.use_chamber_checkbox.toggled.connect(lambda checked: self.instrument_enable_changed_signal.emit("CHAMBER", checked))
 
     def _save_settings(self) -> bool:
         """현재 UI의 설정 값들을 self.current_settings에 업데이트하고, settings_manager를 통해 파일로 저장합니다.
@@ -293,6 +295,8 @@ class SettingsTab(QWidget):
                             else:
                                 print("Info: Test Sequence tab is now disabled - no instruments are checked.")
                         
+                        # Add this debug line
+                        print(f"DEBUG_SettingsTab: Main SequenceControllerTab current enabled state: {main_tabs.isTabEnabled(tab_idx)}, attempting to set to: {enable_test_sequence_tab}")
                         # 탭 활성화/비활성화 설정
                         main_tabs.setTabEnabled(tab_idx, enable_test_sequence_tab)
             

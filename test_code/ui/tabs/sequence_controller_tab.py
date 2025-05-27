@@ -1,16 +1,17 @@
 # ui/tabs/sequence_controller_tab.py
 import sys
 import os
-from typing import List, Tuple, Dict, Any, Optional, ForwardRef
+from typing import List, Tuple, Dict, Any, Optional, ForwardRef, Union, cast
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QTextEdit, QPushButton, QSplitter, QMessageBox, QApplication, QStyle,
-    QInputDialog, QDialog, QStyledItemDelegate, QStyleOptionViewItem
+    QInputDialog, QDialog, QStyledItemDelegate, QStyleOptionViewItem,
+    QTreeWidget, QTreeWidgetItem, QMenu, QAbstractItemView
 )
-from PyQt5.QtCore import Qt, QSize, QStringListModel, QThread, pyqtSignal, pyqtSlot, QStandardPaths, QModelIndex
-from PyQt5.QtGui import QFont, QIcon, QPainter 
+from PyQt5.QtCore import Qt, QSize, QStringListModel, QThread, pyqtSignal, pyqtSlot, QStandardPaths, QModelIndex, QMimeData, QPoint
+from PyQt5.QtGui import QFont, QIcon, QPainter, QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 # --- 코어 모듈 임포트 ---
 from core import constants
@@ -18,6 +19,7 @@ from core.register_map_backend import RegisterMap
 from core.hardware_control import I2CDevice, Multimeter, Sourcemeter, Chamber
 from core.sequence_io_manager import SequenceIOManager
 from core.sequence_player import SequencePlayer
+from core.data_models import SequenceItem, SimpleActionItem, LoopActionItem
 
 # --- UI 위젯 및 다이얼로그 임포트 ---
 from ui.widgets.action_input_panel import ActionInputPanel
@@ -60,10 +62,11 @@ class SequenceControllerTab(QWidget):
             self.action_input_panel: Optional[ActionInputPanel] = None
             self.add_to_seq_button: Optional[QPushButton] = None
             self.define_loop_button: Optional[QPushButton] = None
+            self.update_action_button: Optional[QPushButton] = None
             self.saved_sequence_panel: Optional[SavedSequencePanel] = None
             self.play_seq_button: Optional[QPushButton] = None
             self.stop_seq_button: Optional[QPushButton] = None
-            self.sequence_list_widget: Optional[QListWidget] = None
+            self.sequence_list_widget: Optional[QTreeWidget] = None
             self.remove_from_seq_button: Optional[QPushButton] = None
             self.clear_seq_button: Optional[QPushButton] = None
             self.execution_log_textedit: Optional[QTextEdit] = None
@@ -261,7 +264,7 @@ class SequenceControllerTab(QWidget):
     def _create_left_panel(self, splitter_arg: Optional[QSplitter]):
         print(f"DEBUG_SCT: Entered _create_left_panel. splitter_arg is {splitter_arg}. self._main_splitter (attribute) is {self._main_splitter}")
         if splitter_arg is None: 
-            print(f"ERROR_SCT: splitter_arg is None in _create_left_panel. Aborting. self._main_splitter is {self._main_splitter}")
+            print(f"ERROR_SCT_LeftPanel: splitter_arg is None in _create_left_panel. Aborting. self._main_splitter is {self._main_splitter}")
             if self._ui_setup_successful : self._ui_setup_successful = False # 명시적으로 실패 처리
             return
         
@@ -282,9 +285,16 @@ class SequenceControllerTab(QWidget):
             action_buttons_layout.addWidget(self.add_to_seq_button)
 
             self.define_loop_button = QPushButton(constants.DEFINE_LOOP_BUTTON_TEXT, left_panel_widget)
-            try: self.define_loop_button.setIcon(QApplication.style().standardIcon(QStyle.SP_BrowserReload)) 
-            except Exception as e_icon: print(f"Warning_SCT: Icon for define_loop_button: {e_icon}")
+            self.define_loop_button.setIcon(QApplication.style().standardIcon(QStyle.SP_DialogYesButton))
             action_buttons_layout.addWidget(self.define_loop_button)
+
+            # "Update Action" 버튼 추가
+            self.update_action_button = QPushButton("Update Selected", left_panel_widget)
+            try: self.update_action_button.setIcon(QApplication.style().standardIcon(QStyle.SP_DialogApplyButton))
+            except Exception as e_icon: print(f"Warning_SCT: Icon for update_action_button: {e_icon}")
+            self.update_action_button.setEnabled(False) # 초기에는 비활성화
+            action_buttons_layout.addWidget(self.update_action_button)
+
             left_panel_layout.addLayout(action_buttons_layout)
 
             # Stretch before SavedSequencePanel and Play/Stop buttons
@@ -335,15 +345,41 @@ class SequenceControllerTab(QWidget):
         right_panel_layout.addWidget(seq_list_label)
 
         try:
-            self.sequence_list_widget = QListWidget(right_panel_widget)
-        except Exception as e_listwidget:
-            print(f"CRITICAL_ERROR_SCT: Exception during QListWidget creation: {e_listwidget}")
+            self.sequence_list_widget = QTreeWidget(right_panel_widget)
+            if self.sequence_list_widget:
+                self.sequence_list_widget.setHeaderLabels(["Sequence Action / Details"])
+                self.sequence_list_widget.setColumnCount(1)
+                self.sequence_list_widget.setDragEnabled(True)
+                self.sequence_list_widget.setAcceptDrops(True)
+                self.sequence_list_widget.setDropIndicatorShown(True)
+                self.sequence_list_widget.setDragDropMode(QAbstractItemView.InternalMove)
+                self.sequence_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+                self.sequence_list_widget.customContextMenuRequested.connect(self._show_tree_context_menu)
+                # Add stylesheet for item padding and spacing
+                self.sequence_list_widget.setStyleSheet("""
+                    QTreeWidget::item {
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+                        border: 1px solid transparent; /* Optional: for spacing effect */
+                    }
+                    QTreeWidget::item:hover {
+                        background-color: #e6f2ff; /* Light blue hover, adjust as needed */
+                    }
+                    QTreeWidget::item:selected {
+                        background-color: #cce5ff; /* Slightly darker blue for selection */
+                        color: black;
+                    }
+                """)
+                # Increase header height if needed (optional)
+                # self.sequence_list_widget.header().setMinimumSectionSize(30) 
+
+        except Exception as e_treewidget:
+            print(f"CRITICAL_ERROR_SCT: Exception during QTreeWidget creation: {e_treewidget}")
             self._ui_setup_successful = False
             return 
 
-        # QListWidget 생성 후 유효성 검사를 None 체크만으로 변경
         if self.sequence_list_widget is None:
-            print(f"CRITICAL_ERROR_SCT: QListWidget creation failed (is None).")
+            print(f"CRITICAL_ERROR_SCT: QTreeWidget creation failed (is None).")
             self._ui_setup_successful = False
             return
 
@@ -376,7 +412,7 @@ class SequenceControllerTab(QWidget):
             
             splitter_arg.addWidget(right_panel_widget) 
         except Exception as e:
-            print(f"CRITICAL_ERROR_SCT: Exception during _create_right_panel (after QListWidget creation): {e}")
+            print(f"CRITICAL_ERROR_SCT: Exception during _create_right_panel (after QTreeWidget creation): {e}")
             import traceback
             traceback.print_exc()
             self._ui_setup_successful = False
@@ -389,8 +425,11 @@ class SequenceControllerTab(QWidget):
         if self.add_to_seq_button: self.add_to_seq_button.clicked.connect(self._add_item_from_action_panel)
         else: print("Error_SCT: add_to_seq_button is None, cannot connect.")
         
-        if self.define_loop_button: self.define_loop_button.clicked.connect(self._handle_define_loop)
+        if self.define_loop_button: self.define_loop_button.clicked.connect(self._add_new_loop_block_action_slot)
         else: print("Error_SCT: define_loop_button is None, cannot connect.")
+
+        if self.update_action_button: self.update_action_button.clicked.connect(self._handle_update_selected_action)
+        else: print("Error_SCT: update_action_button is None, cannot connect.")
 
         if self.play_seq_button: self.play_seq_button.clicked.connect(self.play_sequence)
         else: print("Error_SCT: play_seq_button is None, cannot connect.")
@@ -405,9 +444,13 @@ class SequenceControllerTab(QWidget):
         else: print("Error_SCT: remove_from_seq_button is None, cannot connect.")
         
         if self.saved_sequence_panel:
-            self.saved_sequence_panel.load_sequence_to_editor_requested.connect(self._load_items_to_sequence_list)
+            self.saved_sequence_panel.load_sequence_to_editor_requested.connect(self._add_items_to_tree)
             self.saved_sequence_panel.save_current_sequence_as_requested.connect(self._handle_save_current_sequence_as)
         else: print("Error_SCT: saved_sequence_panel is None, cannot connect its signals.")
+
+        if self.sequence_list_widget:
+            self.sequence_list_widget.customContextMenuRequested.connect(self._show_tree_context_menu)
+            self.sequence_list_widget.currentItemChanged.connect(self._handle_edit_action_item)
 
     @pyqtSlot()
     def _add_item_from_action_panel(self):
@@ -415,122 +458,73 @@ class SequenceControllerTab(QWidget):
             QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
         if not self.action_input_panel:
             QMessageBox.critical(self, "오류", "액션 입력 패널이 준비되지 않았습니다 (action_input_panel is None)."); return
-        if self.sequence_list_widget is None: # None 체크로 변경
+        if self.sequence_list_widget is None:
             QMessageBox.critical(self, "오류", "시퀀스 목록 위젯이 유효하지 않습니다 (sequence_list_widget is None)."); return
 
         action_data = self.action_input_panel.get_current_action_string_and_prefix()
         if action_data:
-            _prefix, full_action_str, _params_dict = action_data
-            self.sequence_list_widget.addItem(full_action_str)
+            _prefix, full_action_str, params_dict = action_data
+            tree_item = QTreeWidgetItem(self.sequence_list_widget)
+            tree_item.setText(0, full_action_str)
             self.action_input_panel.clear_input_fields() 
+
+            # ActionInputPanel에서 가져온 정보로 SimpleActionItem 생성
+            new_action_data: SimpleActionItem = {
+                "item_id": f"action_{datetime.now().timestamp()}", # 고유 ID 생성
+                "action_type": _prefix,
+                "parameters": params_dict,
+                "display_name": full_action_str
+            }
+            tree_item.setData(0, Qt.UserRole, new_action_data)
+
+    @pyqtSlot()
+    def _add_new_loop_block_action_slot(self):
+        # 사용자가 "Define Loop" 버튼을 클릭했을 때 호출됩니다.
+        # 현재 선택된 아이템을 기준으로 새 루프 블록을 추가할 위치를 결정합니다.
+        target_parent = None
+        insert_after = None
+        if self.sequence_list_widget:
+            current_selection = self.sequence_list_widget.currentItem()
+            if current_selection:
+                # 선택된 아이템이 루프면 그 안에, 아니면 그 다음에 추가
+                current_data = current_selection.data(0, Qt.UserRole)
+                if isinstance(current_data, dict) and current_data.get("action_type") == "Loop":
+                    target_parent = current_selection
+                else:
+                    insert_after = current_selection 
+            # 선택된 아이템이 없으면 최상위에 추가 (insert_after=None, target_parent=None)
+        self._add_new_loop_block_action(target_parent_item=target_parent, insert_after_item=insert_after)
+
+    def _add_new_loop_block_action(self, target_parent_item: Optional[QTreeWidgetItem] = None, insert_after_item: Optional[QTreeWidgetItem] = None):
+        if not self.sequence_list_widget: return
+        loop_dialog = LoopDefinitionDialog(parent=self)
+        if loop_dialog.exec_() == QDialog.Accepted:
+            new_loop_data = loop_dialog.get_loop_parameters()
+            if new_loop_data:
+                new_loop_item = QTreeWidgetItem()
+                new_loop_item.setText(0, new_loop_data.get("display_name", "Loop"))
+                new_loop_item.setData(0, Qt.UserRole, new_loop_data)
+
+                if target_parent_item:
+                    target_parent_item.addChild(new_loop_item)
+                    target_parent_item.setExpanded(True)
+                else:
+                    self.sequence_list_widget.addTopLevelItem(new_loop_item)
+
+                self.action_input_panel.clear_input_fields()
 
     @pyqtSlot()
     def _handle_define_loop(self):
-        """루프 정의 다이얼로그를 표시하고 루프 액션을 시퀀스에 추가합니다."""
-        if not self.sequence_list_widget or self.sequence_list_widget.count() == 0:
-            QMessageBox.information(self, "루프 정의", "루프를 정의하려면 시퀀스 목록에 하나 이상의 항목이 필요합니다.")
-            return
-            
-        # 다이얼로그에 전달할 현재 시퀀스 아이템 정보 수집
-        target_actions_data = []
-        
-        self.log_message("Loop definition started - analyzing sequence items")
-        
-        for idx in range(self.sequence_list_widget.count()):
-            item = self.sequence_list_widget.item(idx)
-            if not item: continue  # None 체크
-            
-            # 이미 루프 내에 있는 항목은 제외
-            if self._is_item_in_loop(idx):
-                self.log_message(f"Item {idx} is already in a loop, skipping")
-                continue
-                
-            # 항목 텍스트 파싱
-            action_text = item.text()
-            prefix, params_dict = self._parse_sequence_item(action_text)
-            
-            if prefix and prefix not in [constants.SEQ_PREFIX_LOOP_START, constants.SEQ_PREFIX_LOOP_END]:
-                # 루프 시작/종료가 아닌 일반 액션만 대상에 포함
-                self.log_message(f"Adding item {idx} (prefix={prefix}) to loop candidates")
-                target_actions_data.append((idx, prefix, params_dict))
-            
-        if not target_actions_data:
-            QMessageBox.information(self, "루프 정의", 
-                                    "루프 정의 가능한 항목이 없습니다.\n"
-                                    "이미 모든 항목이 루프에 포함되어 있거나 루프에 적합하지 않은 항목입니다.")
-            return
-            
-        dialog = LoopDefinitionDialog(target_actions_data, self)
-        self.log_message(f"Opening loop definition dialog with {len(target_actions_data)} candidate items")
-        
-        if dialog.exec_() == QDialog.Accepted:
-            loop_params = dialog.get_loop_parameters()
-            if loop_params:
-                self.log_message(f"Loop parameters accepted: {loop_params}")
-                
-                # 루프 정의 파라미터 가져오기
-                action_idx = loop_params[constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX]
-                target_param_key = loop_params[constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY]
-                start_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_START_VALUE]
-                step_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE]
-                end_val = loop_params[constants.SEQ_PARAM_KEY_LOOP_END_VALUE]
-                
-                # 루프 시작 항목 추가 (대상 액션 바로 앞에)
-                loop_start_text = f"{constants.SEQ_PREFIX_LOOP_START}: " \
-                                f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={action_idx}; " \
-                                f"{constants.SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY}={target_param_key}; " \
-                                f"{constants.SEQ_PARAM_KEY_LOOP_START_VALUE}={start_val}; " \
-                                f"{constants.SEQ_PARAM_KEY_LOOP_STEP_VALUE}={step_val}; " \
-                                f"{constants.SEQ_PARAM_KEY_LOOP_END_VALUE}={end_val}"
-                
-                self.sequence_list_widget.insertItem(action_idx, loop_start_text)
-                
-                # 루프 시작 후 액션 인덱스가 1 증가했으므로 종료도 1 증가
-                target_action_new_idx = action_idx + 1
-                
-                # 루프 종료 항목 추가 (대상 액션 바로 뒤에)
-                loop_end_text = f"{constants.SEQ_PREFIX_LOOP_END}: " \
-                              f"{constants.SEQ_PARAM_KEY_LOOP_ACTION_INDEX}={action_idx}"
-                
-                self.sequence_list_widget.insertItem(target_action_new_idx + 1, loop_end_text)
-                
-                self.log_message("Loop added to sequence")
-                
-                # 새로 추가된 루프 시작 항목 선택
-                self.sequence_list_widget.setCurrentRow(action_idx)
-            else:
-                self.log_message("Loop definition cancelled or invalid parameters")
-        else:
-            self.log_message("Loop definition cancelled by user")
+        # 이 함수는 이제 Define Loop 버튼의 직접적인 핸들러가 아님.
+        # _add_new_loop_block_action_slot 을 통해 호출됨.
+        # 기존 버튼의 동작을 유지하려면, 최상위 레벨에 추가하도록 호출
+        self._add_new_loop_block_action(target_parent_item=None, insert_after_item=None)
+        return 
 
     def _is_item_in_loop(self, item_index: int) -> bool:
-        if self.sequence_list_widget is None: return False # None 체크로 변경
+        if self.sequence_list_widget is None: return False
         
-        loop_level = 0
-        for i in range(item_index + 1): 
-            item = self.sequence_list_widget.item(i)
-            if not item: continue 
-            item_text = item.text().strip() 
-
-            if item_text.startswith(constants.SEQ_PREFIX_LOOP_START):
-                loop_level += 1
-            elif item_text.startswith(constants.SEQ_PREFIX_LOOP_END):
-                if loop_level > 0: 
-                    loop_level -= 1
-            
-            if i == item_index and \
-               not item_text.startswith(constants.SEQ_PREFIX_LOOP_START) and \
-               not item_text.startswith(constants.SEQ_PREFIX_LOOP_END):
-                return loop_level > 0 
-        return False 
-
-    @pyqtSlot(list)
-    def _load_items_to_sequence_list(self, items: List[str]):
-        if not self._ui_setup_successful: QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
-        if self.sequence_list_widget is None: # None 체크로 변경
-            QMessageBox.critical(self, "오류", "시퀀스 목록 위젯이 유효하지 않습니다."); return
-        
-        if self.sequence_list_widget.count() > 0:
+        if self.sequence_list_widget.topLevelItemCount() > 0:
             reply = QMessageBox.question(self, "시퀀스 로드", 
                                          "현재 편집 중인 시퀀스가 있습니다. 저장하지 않은 변경사항은 사라집니다.\n"
                                          "새 시퀀스를 로드하고 현재 목록을 지우시겠습니까?",
@@ -539,67 +533,109 @@ class SequenceControllerTab(QWidget):
                 return
         
         self.sequence_list_widget.clear()
-        self.sequence_list_widget.addItems(items) 
+        self._add_items_to_tree(items)
         
         if self.execution_log_textedit: 
             self.execution_log_textedit.clear()
-            log_prefix = items[0].split(':')[0] if items else "빈"
-            self.execution_log_textedit.append(f"--- '{log_prefix}{'...' if items and ':' in items[0] else ''}' 시퀀스가 로드되었습니다. ---")
+            log_prefix = "새"
+            if items and isinstance(items[0], dict):
+                 log_prefix = items[0].get("display_name", items[0].get("action_type", "알 수 없는"))
+            self.execution_log_textedit.append(f"--- '{log_prefix}{'...' if items else ''}' 시퀀스가 로드되었습니다. ---")
+
+    def _add_items_to_tree(self, sequence_items: List[SequenceItem], parent_tree_item: Optional[QTreeWidgetItem] = None):
+        """ SequenceItem 리스트를 QTreeWidget에 아이템으로 추가 (재귀적) """
+        if not self.sequence_list_widget: return
+        
+        target_widget = parent_tree_item if parent_tree_item else self.sequence_list_widget
+
+        for item_data in sequence_items:
+            item_display_name = item_data.get("display_name", item_data.get("action_type", "Unknown Action"))
+            tree_item = QTreeWidgetItem(target_widget)
+            tree_item.setText(0, item_display_name)
+            tree_item.setData(0, Qt.UserRole, item_data) # 전체 SequenceItem 딕셔너리 저장
+
+            if item_data.get("action_type") == "Loop":
+                looped_actions = item_data.get("looped_actions", [])
+                if looped_actions:
+                    self._add_items_to_tree(looped_actions, tree_item) # 재귀 호출
+                tree_item.setExpanded(True)
 
     @pyqtSlot(str)
     def _handle_save_current_sequence_as(self, requested_name_without_ext: str):
         if not self._ui_setup_successful: QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
-        if self.sequence_list_widget is None or self.saved_sequence_panel is None: # None 체크로 변경
+        if self.sequence_list_widget is None or self.saved_sequence_panel is None:
             QMessageBox.critical(self, "오류", "필수 UI 요소(시퀀스 목록 또는 저장 패널)가 초기화되지 않았습니다."); return
         
-        current_items = [self.sequence_list_widget.item(i).text() for i in range(self.sequence_list_widget.count())]
-        if not current_items:
+        current_items_data = self._get_sequence_data_from_tree(self.sequence_list_widget.invisibleRootItem())
+        if not current_items_data:
             QMessageBox.information(self, "시퀀스 저장", "저장할 아이템이 시퀀스 목록에 없습니다."); return
         
         if self.sequence_io_manager.save_sequence(sequence_name_no_ext=requested_name_without_ext, 
-                                                 sequence_lines=current_items, 
-                                                 overwrite=True): # 덮어쓰기 허용 (필요시 로직 수정)
+                                                 sequence_items=current_items_data, 
+                                                 overwrite=True): 
             QMessageBox.information(self, "저장 성공", f"시퀀스가 '{requested_name_without_ext}{constants.SEQUENCE_FILE_EXTENSION}' 이름으로 저장되었습니다.")
-            if self.saved_sequence_panel: # 패널이 있다면 목록 새로고침
+            if self.saved_sequence_panel: 
                 self.saved_sequence_panel.load_saved_sequences()
         else:
             QMessageBox.warning(self, "저장 실패", f"시퀀스 '{requested_name_without_ext}' 저장에 실패했습니다.")
 
+    def _get_sequence_data_from_tree(self, parent_item: QTreeWidgetItem) -> List[SequenceItem]:
+        """ QTreeWidget으로부터 계층적인 SequenceItem 데이터 리스트를 추출 (재귀적) """
+        items_data: List[SequenceItem] = []
+        for i in range(parent_item.childCount()):
+            child_item = parent_item.child(i)
+            item_data = child_item.data(0, Qt.UserRole) # 저장된 SequenceItem 딕셔너리 가져오기
+            if isinstance(item_data, dict):
+                # LoopActionItem의 경우, looped_actions도 재귀적으로 추출
+                if item_data.get("action_type") == "Loop":
+                    # 자식 아이템으로부터 looped_actions을 다시 구성
+                    item_data["looped_actions"] = self._get_sequence_data_from_tree(child_item)
+                items_data.append(item_data) # type: ignore
+        return items_data
+
     @pyqtSlot()
     def remove_selected_item_with_warning(self):
         if not self._ui_setup_successful: QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
-        if self.sequence_list_widget is None: # None 체크로 변경
+        if self.sequence_list_widget is None: 
             QMessageBox.critical(self, "오류", "시퀀스 목록 위젯이 유효하지 않습니다."); return
         
-        selected_items = self.sequence_list_widget.selectedItems()
-        if not selected_items:
+        selected_tree_items = self.sequence_list_widget.selectedItems()
+        if not selected_tree_items:
             QMessageBox.information(self, "삭제 오류", "삭제할 아이템을 목록에서 선택하세요."); return
 
+        current_item = selected_tree_items[0]
+        item_data = current_item.data(0, Qt.UserRole) # SequenceItem 데이터 가져오기
+        item_text_for_warning = current_item.text(0)
+
         warn_loop_structure = False
-        indices_to_remove = sorted([self.sequence_list_widget.row(item) for item in selected_items], reverse=True)
-
-        for index in indices_to_remove:
-            item_text = self.sequence_list_widget.item(index).text().strip()
-            if item_text.startswith((constants.SEQ_PREFIX_LOOP_START, constants.SEQ_PREFIX_LOOP_END)):
-                warn_loop_structure = True; break
-
+        if isinstance(item_data, dict) and item_data.get("action_type") == "Loop":
+            if item_data.get("looped_actions"): # 루프 내부에 액션이 있으면 경고
+                warn_loop_structure = True
+        
         if warn_loop_structure:
             reply = QMessageBox.question(self, "루프 구조 경고",
-                                         "선택된 아이템 중 루프 시작 또는 종료 명령이 포함되어 있습니다.\n"
-                                         "삭제 시 루프 구조가 손상될 수 있습니다. 계속하시겠습니까?",
+                                         f"선택된 아이템 '{item_text_for_warning}'은(는) Loop 블록이며 내부에 다른 액션을 포함할 수 있습니다.\n"
+                                         "삭제 시 내부의 모든 액션도 함께 삭제됩니다. 계속하시겠습니까?",
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.No:
                 return
         
-        for index in indices_to_remove:
-            self.sequence_list_widget.takeItem(index)
+        parent_of_selected = current_item.parent()
+        if parent_of_selected: # 자식 아이템인 경우
+            parent_of_selected.removeChild(current_item)
+        else: # 최상위 아이템인 경우
+            self.sequence_list_widget.takeTopLevelItem(self.sequence_list_widget.indexOfTopLevelItem(current_item))
+        
+        # TODO: 내부 데이터 모델 (List[SequenceItem])에서도 해당 아이템 삭제하는 로직 필요
+        #       (현재는 UI에서만 제거. self.sequence_items와 같은 리스트가 있다면 거기서도 제거해야 함)
+        #       또는, 항상 QTreeWidget을 기준으로 데이터를 다시 읽어오는 방식 사용.
 
     @pyqtSlot()
     def clear_sequence_list_and_log(self):
         if not self._ui_setup_successful: QMessageBox.critical(self, "오류", "탭 UI가 올바르게 초기화되지 않아 작업을 수행할 수 없습니다."); return
         
         if self.sequence_list_widget is not None:
-            if self.sequence_list_widget.count() > 0:
+            if self.sequence_list_widget.topLevelItemCount() > 0:
                 reply = QMessageBox.question(self, "목록 초기화",
                                              "정말로 현재 시퀀스 목록 전체를 지우시겠습니까?",
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -619,12 +655,12 @@ class SequenceControllerTab(QWidget):
         if self.sequence_player_thread and self.sequence_player_thread.isRunning():
             QMessageBox.information(self, constants.MSG_TITLE_INFO, "시퀀스가 이미 실행 중입니다. 먼저 중단해주세요."); return
         
-        if self.sequence_list_widget is None or self.sequence_list_widget.count() == 0: # None 체크
+        if self.sequence_list_widget is None or self.sequence_list_widget.topLevelItemCount() == 0: # count() -> topLevelItemCount()
             QMessageBox.information(self, constants.MSG_TITLE_INFO, constants.MSG_SEQUENCE_EMPTY); return
         
         if self.execution_log_textedit: self.execution_log_textedit.clear() 
         
-        items_to_play = [self.sequence_list_widget.item(i).text() for i in range(self.sequence_list_widget.count())]
+        items_to_play = self._get_sequence_data_from_tree(self.sequence_list_widget.invisibleRootItem()) # QTreeWidget에서 데이터 가져오기
         
         sample_num = constants.DEFAULT_SAMPLE_NUMBER 
         if self.main_window_ref and hasattr(self.main_window_ref, 'get_current_sample_number'):
@@ -759,3 +795,213 @@ class SequenceControllerTab(QWidget):
         if self.action_input_panel: 
             self.action_input_panel.update_settings(self.current_settings)
         print("INFO_SCT: Settings updated in SequenceControllerTab.")
+
+    # --- QTreeWidget Drag and Drop Handling --- #
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        # 여기서 event.mimeData()를 확인하여 내부 드래그인지, 
+        # 또는 다른 타입의 데이터인지 확인할 수 있습니다.
+        # 현재는 QAbstractItemView.InternalMove를 사용하므로, 
+        # 프레임워크가 어느 정도 처리해줍니다.
+        if event.source() == self.sequence_list_widget: # 같은 위젯 내의 드래그만 허용
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent):
+        # 드롭 가능한 위치인지 시각적으로 피드백을 줄 수 있습니다.
+        # 예: 특정 아이템 위로 드래그 시, 해당 아이템의 스타일 변경
+        # 현재는 기본 동작에 맡깁니다.
+        if event.source() == self.sequence_list_widget:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        if not self.sequence_list_widget: return
+        if event.source() != self.sequence_list_widget: # 외부로부터의 드롭은 무시
+            event.ignore()
+            return
+
+        # 기본 InternalMove 동작이 아이템을 옮기도록 두고,
+        # 여기서는 추가적인 로직 (예: 데이터 모델 업데이트, 유효성 검사)을 수행할 수 있습니다.
+        # QTreeWidget의 InternalMove는 기본적으로 아이템을 시각적으로 옮깁니다.
+        # 실제 데이터 (setData로 저장된 SequenceItem)도 함께 이동되는지, 
+        # 아니면 수동으로 소스 아이템의 데이터를 타겟 위치에 복사/이동해야 하는지 확인 필요.
+        # Qt의 기본 InternalMove는 아이템 자체를 옮기므로 데이터도 따라갈 가능성이 높습니다.
+
+        # 드롭된 아이템 (source item)
+        # dropped_item = self.sequence_list_widget.currentItem() # currentItem()은 드래그 시작 아이템일 수 있음
+        # 실제로는 event.mimeData()를 파싱하여 드래그된 아이템 정보를 얻거나,
+        # QTreeWidget이 내부적으로 처리한 후의 상태를 기준으로 작업해야 합니다.
+        
+        # 현재로서는 QTreeWidget의 기본 InternalMove 동작에 의존합니다.
+        # drop 후, self._get_sequence_data_from_tree()를 호출하여 전체 데이터 구조를 다시 읽어
+        # 내부 데이터 모델 (예: self.sequence_items_data_list)을 업데이트하는 것이 안전할 수 있습니다.
+        
+        self.log_message("Sequence item(s) moved via drag and drop.")
+        # 예: self.update_internal_data_model_from_tree() 호출
+        event.acceptProposedAction()
+        # 여기서 시퀀스 재생 중이면 드래그앤드롭을 막는 로직도 추가 가능
+
+    # --- End Drag and Drop --- #
+
+    # --- Context Menu --- #
+    def _show_tree_context_menu(self, position: QPoint):
+        if not self.sequence_list_widget: return
+        item_at_pos = self.sequence_list_widget.itemAt(position)
+        menu = QMenu(self.sequence_list_widget)
+
+        if item_at_pos: # 아이템 위에서 우클릭
+            self.sequence_list_widget.setCurrentItem(item_at_pos) # Ensure item is selected
+            item_data = item_at_pos.data(0, Qt.UserRole)
+            is_loop_item = isinstance(item_data, dict) and item_data.get("action_type") == "Loop"
+            
+            edit_text = "Edit Loop Parameters..." if is_loop_item else "Edit Action..."
+            act_edit = menu.addAction(QIcon.fromTheme("document-edit"), edit_text)
+            act_delete = menu.addAction(QIcon.fromTheme("edit-delete"), "Delete Item")
+            menu.addSeparator()
+            
+            if is_loop_item:
+                act_add_inside_loop = menu.addAction("Add Action Inside This Loop")
+                act_add_inside_loop.triggered.connect(lambda checked=False, current_loop_item=item_at_pos: self._handle_add_action_to_loop(current_loop_item))
+            
+            act_add_action_after = menu.addAction("Add New Action After This")
+            act_add_action_after.triggered.connect(lambda checked=False, current_item_ref=item_at_pos: self._handle_add_action_here(current_item_ref, insert_after=True))
+            act_add_loop_after = menu.addAction("Add New Loop Block After This")
+            act_add_loop_after.triggered.connect(lambda checked=False, current_item_ref=item_at_pos: self._add_new_loop_block_action(insert_after_item=current_item_ref))
+            
+            chosen_action = menu.exec_(self.sequence_list_widget.mapToGlobal(position))
+            if chosen_action == act_edit: 
+                self._handle_edit_action_item(item_at_pos)
+                if self.update_action_button: self.update_action_button.setEnabled(True) # Enable update button
+            elif chosen_action == act_delete: self.remove_selected_item_with_warning()
+        else: # 빈 공간에서 우클릭
+            if self.update_action_button: self.update_action_button.setEnabled(False) # Disable update button
+            act_add_top_action = menu.addAction("Add New Action (Top Level)")
+            act_add_top_loop = menu.addAction("Add New Loop Block (Top Level)")
+            chosen_action = menu.exec_(self.sequence_list_widget.mapToGlobal(position))
+            if chosen_action == act_add_top_action: self._handle_add_action_here(None, insert_after=False)
+            elif chosen_action == act_add_top_loop: self._add_new_loop_block_action(target_parent_item=None, insert_after_item=None)
+
+    def _handle_edit_action_item(self, item: Optional[QTreeWidgetItem]): # item can be None if called by currentItemChanged
+        if not item: 
+            if self.update_action_button: self.update_action_button.setEnabled(False) # No item selected, disable button
+            return
+        
+        item_data = item.data(0, Qt.UserRole)
+        if not isinstance(item_data, dict): 
+            if self.update_action_button: self.update_action_button.setEnabled(False)
+            return
+
+        if item_data.get("action_type") == "Loop":
+            if self.update_action_button: self.update_action_button.setEnabled(True) # Enable for loops too if dialog allows live update
+            loop_dialog = LoopDefinitionDialog(existing_loop_data=cast(LoopActionItem, item_data), parent=self)
+            if loop_dialog.exec_() == QDialog.Accepted:
+                updated_loop_data = loop_dialog.get_loop_parameters()
+                if updated_loop_data:
+                    item.setData(0, Qt.UserRole, updated_loop_data)
+                    item.setText(0, updated_loop_data.get("display_name", "Loop"))
+                    self.log_message(f"Loop '{item.text(0)}' updated.")
+            # After dialog, whether accepted or not, disable update button unless re-selected
+            # if self.update_action_button: self.update_action_button.setEnabled(False) 
+        else: # SimpleActionItem 편집
+            if self.action_input_panel:
+                self.action_input_panel.load_action_data_for_editing(cast(SimpleActionItem, item_data))
+                if self.update_action_button: self.update_action_button.setEnabled(True) # Enable button after loading
+            # QMessageBox.information(self, "Edit Action", 
+            #                         f"Editing: {item.text(0)}\nAction parameters loaded to input panel on the left. \nModify and use \"Update Selected\" button. ")
+
+    def _handle_add_action_to_loop(self, loop_item: QTreeWidgetItem):
+        if not self.action_input_panel or not loop_item: return
+        action_item_data = self.action_input_panel.get_current_action_as_simple_item()
+        if not action_item_data:
+            self.log_message("Define an action in the panel first to add it to the loop."); return
+
+        loop_data = loop_item.data(0, Qt.UserRole)
+        if not loop_data or loop_data.get("action_type") != "Loop":
+            self.log_message("Selected item is not a valid loop."); return
+        
+        self._add_items_to_tree([action_item_data], parent_tree_item=loop_item)
+        
+        self.log_message(f"Action '{action_item_data.get('display_name')}' added to loop '{loop_data.get('display_name')}'.")
+        self.action_input_panel.clear_input_fields()
+
+    def _handle_add_action_here(self, current_item: Optional[QTreeWidgetItem], insert_after: bool = False):
+        """ 현재 선택된 아이템과 같은 레벨에 새 액션 추가 """ 
+        if not self.action_input_panel or not self.sequence_list_widget: return
+        
+        action_data_tuple = self.action_input_panel.get_current_action_string_and_prefix()
+        if action_data_tuple:
+            prefix, full_str, params = action_data_tuple
+            new_action_item_data: SimpleActionItem = {
+                "item_id": f"item_{datetime.now().timestamp()}",
+                "action_type": prefix,
+                "parameters": params,
+                "display_name": full_str
+            }
+
+            parent_of_current = current_item.parent()
+            target_parent_for_new_item = parent_of_current if parent_of_current else self.sequence_list_widget.invisibleRootItem()
+            
+            new_tree_item = QTreeWidgetItem()
+            new_tree_item.setText(0, full_str)
+            new_tree_item.setData(0, Qt.UserRole, new_action_item_data)
+
+            if parent_of_current: # 선택된 아이템이 자식이면, 그 부모의 자식으로 추가
+                # 현재 아이템 다음에 삽입 (선택적)
+                current_index_in_parent = parent_of_current.indexOfChild(current_item)
+                parent_of_current.insertChild(current_index_in_parent + 1, new_tree_item)
+            else: # 선택된 아이템이 최상위면, 그 다음에 최상위로 추가
+                current_top_level_index = self.sequence_list_widget.indexOfTopLevelItem(current_item)
+                self.sequence_list_widget.insertTopLevelItem(current_top_level_index + 1, new_tree_item)
+            
+            self.log_message(f"Action '{full_str}' added near '{current_item.text(0)}'.")
+            self.action_input_panel.clear_input_fields()
+        else:
+            QMessageBox.warning(self, "Add Action", "No action defined in the input panel.")
+
+    @pyqtSlot()
+    def _handle_update_selected_action(self):
+        if not self.sequence_list_widget or not self.action_input_panel:
+            QMessageBox.critical(self, "Error", "UI components not ready for update.")
+            return
+
+        selected_item = self.sequence_list_widget.currentItem()
+        if not selected_item:
+            QMessageBox.information(self, "Update Action", "Please select an action item in the tree to update.")
+            return
+        
+        current_item_data = selected_item.data(0, Qt.UserRole)
+        if not isinstance(current_item_data, dict) or current_item_data.get("action_type") == "Loop":
+            QMessageBox.warning(self, "Update Action", "Selected item is a Loop or has invalid data. Cannot update with simple action panel.")
+            return
+
+        action_data_tuple = self.action_input_panel.get_current_action_string_and_prefix()
+        if not action_data_tuple:
+            QMessageBox.warning(self, "Update Action", "No action data defined in the input panel to update with.")
+            return
+        
+        prefix, full_str, params = action_data_tuple
+        
+        updated_action_data: SimpleActionItem = {
+            "item_id": current_item_data.get("item_id", f"updated_{datetime.now().timestamp()}"), # 기존 ID 유지 또는 새로 생성
+            "action_type": prefix,
+            "parameters": params,
+            "display_name": full_str
+        }
+        
+        selected_item.setText(0, full_str) # UI 표시 업데이트
+        selected_item.setData(0, Qt.UserRole, updated_action_data) # 저장된 데이터 업데이트
+        self.log_message(f"Action '{full_str}' (ID: {updated_action_data['item_id']}) updated.")
+        self.action_input_panel.clear_input_fields()
+        if self.update_action_button: self.update_action_button.setEnabled(False) # 업데이트 후 비활성화
+
+    # --- New method for explicit sub-tab control --- #
+    def set_instrument_tab_enabled(self, instrument_type: str, enabled: bool):
+        if self.action_input_panel and hasattr(self.action_input_panel, 'enable_instrument_sub_tab'):
+            self.action_input_panel.enable_instrument_sub_tab(instrument_type, enabled)
+            print(f"DEBUG_SCT: Called ActionInputPanel.enable_instrument_sub_tab for {instrument_type} = {enabled}")
+        else:
+            print(f"ERROR_SCT: ActionInputPanel or its enable_instrument_sub_tab method not found.")
+
+    # --- End Context Menu --- #
