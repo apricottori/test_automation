@@ -60,6 +60,33 @@ class SequencePlayer(QObject):
         self._current_smu_set_current: Optional[float] = None
         self._current_chamber_set_temp: Optional[float] = None
 
+    def _resolve_placeholders(self, value: Any, current_loop_vars: Dict[str, Any]) -> Any:
+        """Recursively resolves placeholders in a string or list/dict of strings."""
+        if isinstance(value, str):
+            for var_name, var_val in current_loop_vars.items():
+                placeholder = f"{{{var_name}}}"
+                if placeholder in value:
+                    # Try to maintain type if the placeholder is the entire string
+                    if value == placeholder:
+                        return var_val 
+                    value = value.replace(placeholder, str(var_val))
+            return value
+        elif isinstance(value, list):
+            return [self._resolve_placeholders(item, current_loop_vars) for item in value]
+        elif isinstance(value, dict):
+            return {k: self._resolve_placeholders(v, current_loop_vars) for k, v in value.items()}
+        return value
+
+    def _get_current_loop_variables_map(self) -> Dict[str, Any]:
+        """Returns a flat map of all current loop variables from active_loop_contexts."""
+        loop_vars_map = {}
+        for context in self.active_loop_contexts:
+            var_name = context.get("loop_variable_name")
+            current_val = context.get("current_value")
+            if var_name and current_val is not None:
+                loop_vars_map[var_name] = current_val
+        return loop_vars_map
+
     def _parse_sequence_item(self, item_text: str) -> Tuple[Optional[str], Dict[str, str]]:
         # 이 함수는 이제 SequenceItem 객체를 직접 사용하므로, 문자열 파싱은 불필요.
         # 다만, SequenceControllerTab 등 UI 단에서 문자열을 SequenceItem으로 변환하거나,
@@ -162,43 +189,58 @@ class SequencePlayer(QObject):
                 loop_context = {
                     "item_id": item_id,
                     "loop_variable_name": loop_var_name if loop_var_name else f"loop_iter_{len(self.active_loop_contexts)}",
-                    "current_value": None # 초기에는 None, 루프 진입 시 설정
+                    "current_value": None, # 초기에는 None, 루프 진입 시 설정
+                    "sweep_type": loop_item.get("sweep_type") # Store sweep_type for logging/conditions
                 }
                 self.active_loop_contexts.append(loop_context)
-                self.log_message_signal.emit(f"  Loop Start: {display_name}")
+                self.log_message_signal.emit(f"  Loop Start: {display_name} (Type: {loop_context.get('sweep_type')})")
 
-                while True: # 루프 조건에 따라 break
+                # Determine loop iteration logic based on sweep_type
+                sweep_type = loop_item.get("sweep_type")
+                current_iter_value: Any = None
+                loop_iterations_source: List[Any] = []
+
+                if sweep_type == "NumericRange":
+                    if not all(v is not None for v in [start_val, stop_val, step_val]) or (step_val is not None and step_val == 0):
+                        error_msg = "NumericRange loop: start, stop, or step value is invalid or step is zero."; break
+                    # Generate all values for the range
+                    current = start_val
+                    if step_val is not None and start_val is not None and stop_val is not None: # Check for None before comparison
+                        if step_val > 0:
+                            while current <= stop_val:
+                                loop_iterations_source.append(current)
+                                current += step_val
+                        else: # step_val < 0 (already checked step_val != 0)
+                            while current >= stop_val:
+                                loop_iterations_source.append(current)
+                                current += step_val
+                    else:
+                        error_msg = "NumericRange loop: start, stop or step value is None after check."; break
+                elif sweep_type == "ValueList":
+                    value_list = loop_item.get("value_list", [])
+                    if not value_list:
+                        error_msg = "ValueList loop: list of values is empty."; break
+                    loop_iterations_source = value_list
+                elif sweep_type == "FixedCount":
+                    if loop_count is None or loop_count <= 0:
+                        error_msg = "FixedCount loop: loop_count is invalid."; break
+                    loop_iterations_source = list(range(1, loop_count + 1)) # 1-based iteration count for display
+                else:
+                    error_msg = f"Unknown or unsupported sweep_type: {sweep_type}"; break
+
+                for iter_idx, current_iter_value_from_source in enumerate(loop_iterations_source):
                     if self.request_stop_flag: break
 
-                    # 현재 루프 값 업데이트
-                    if loop_var_name and start_val is not None and step_val is not None: # 변수 스윕 루프
-                        loop_context["current_value"] = current_loop_val
-                        self.log_message_signal.emit(f"    Loop Iteration {iteration+1}: {loop_var_name} = {current_loop_val}")
-                    elif loop_count is not None: # 횟수 기반 루프
-                        loop_context["current_value"] = iteration + 1 # 1부터 시작하는 반복 횟수
-                        self.log_message_signal.emit(f"    Loop Iteration {iteration+1}/{loop_count}")
-                    else:
-                        error_msg = "잘못된 루프 파라미터 (스윕 또는 횟수 정보 부족)"; break
+                    loop_context["current_value"] = current_iter_value_from_source
+                    if loop_var_name: # If a variable name is defined for this loop
+                        self.log_message_signal.emit(f"    Loop Iteration {iter_idx+1}/{len(loop_iterations_source)}: {loop_var_name} = {current_iter_value_from_source}")
+                    else: # For FixedCount without a variable name, or other generic cases
+                        self.log_message_signal.emit(f"    Loop Iteration {iter_idx+1}/{len(loop_iterations_source)}")
 
                     # 내부 액션 실행
                     loop_internal_success, loop_internal_msg = self._execute_actions_recursively(looped_actions)
                     if not loop_internal_success:
                         error_msg = f"루프 내부 액션 실패: {loop_internal_msg}"; break
-                    
-                    iteration += 1
-                    # 루프 종료 조건 확인
-                    if loop_var_name and start_val is not None and stop_val is not None and step_val is not None:
-                        if step_val > 0 and current_loop_val >= stop_val:
-                            break
-                        if step_val < 0 and current_loop_val <= stop_val:
-                            break
-                        if step_val == 0: # 무한 루프 방지
-                            error_msg = "루프 스텝 값이 0입니다."; break
-                        current_loop_val += step_val
-                    elif loop_count is not None and iteration >= loop_count:
-                        break
-                    else: # 이 경우는 위에서 이미 필터링되어야 함
-                        error_msg = "루프 종료 조건 판단 불가"; break
                 
                 self.active_loop_contexts.pop() # 현재 루프 컨텍스트 제거
                 if error_msg:
@@ -214,246 +256,255 @@ class SequencePlayer(QObject):
             else: # SimpleActionItem 처리
                 simple_item = cast(SimpleActionItem, current_action_item)
                 params = simple_item.get("parameters", {})
-                modified_params = params.copy() # 루프 변수 적용 등을 위해 복사본 사용 가능성 (현재는 직접 사용)
+                
+                # Resolve placeholders in parameters
+                current_loop_vars_map = self._get_current_loop_variables_map()
+                resolved_params = self._resolve_placeholders(params, current_loop_vars_map)
+                
+                modified_params: Dict[str, Any] # Declare type for modified_params
+                # Initialize step_success to True for simple actions, errors will set it to False
+                current_step_success_flag = True 
 
-                # 루프 컨텍스트의 변수를 현재 액션 파라미터에 적용 (이름이 일치하는 경우)
-                # 예를 들어, 루프 변수명이 "Temperature"이고, 현재 액션 파라미터에 "VAL"이 있고, 
-                # LoopDefinitionDialog에서 "Temperature" 루프를 "VAL" 파라미터에 연결하도록 설정했다면 적용.
-                # 이 로직은 LoopDefinitionDialog의 설계와 긴밀하게 연관됨.
-                # 현재 제안 2에서는 Loop 블록 자체에 loop_variable_name이 있고, 
-                # 내부 액션의 특정 파라미터와 직접 연결하는 메커니즘은 명시되지 않음.
-                # 여기서는 _get_current_conditions()가 모든 루프 변수를 포함하므로, 
-                # 개별 액션에서 해당 값을 사용하려면 액션 자체의 로직 (예: I2C_WRITE_NAME)에서 처리해야 함.
-                # SequencePlayer가 모든 액션의 모든 파라미터를 자동으로 덮어쓰는 것은 위험할 수 있음.
-                # 여기서는 측정 결과에만 루프 변수를 추가하고, 액션 파라미터는 명시적으로 루프에 의해 수정되도록 남겨둠.
+                if not isinstance(resolved_params, dict): # Should always be a dict after resolving
+                    error_msg = "Internal error: Parameter resolution did not return a dictionary."
+                    current_step_success_flag = False
+                    modified_params = {} # Initialize to empty dict to avoid further errors
+                else:
+                    # Use resolved_params for all subsequent logic
+                    modified_params = resolved_params
 
-                try:
-                    current_conditions_with_loops = self._get_current_conditions() # 모든 활성 루프 변수 포함
-                    
-                    # ... (기존 SimpleActionItem 타입에 따른 실행 로직) ...
-                    # 예: I2C_WRITE_NAME
-                    if action_type == constants.SEQ_PREFIX_I2C_WRITE_NAME:
-                        name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME)
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
-                        if self.i2c_device and self.register_map and name and val_str:
-                            field_info = self.register_map.logical_fields_map.get(name)
-                            if not field_info: error_msg = constants.MSG_FIELD_ID_NOT_FOUND.format(field_id=name)
-                            else:
-                                try:
-                                    # 루프 변수가 val_str을 대체해야 하는 경우, 여기서 처리.
-                                    # 예를 들어, 루프 변수명이 params[VALUE_FIELD_NAME_IN_LOOP_DEF] 와 같다면,
-                                    # val_str = str(current_loop_context[params[VALUE_FIELD_NAME_IN_LOOP_DEF]])
-                                    # 현재는 루프 변수가 val_str을 직접 대체하지 않음. SequencePlayer의 _get_current_conditions에만 포함.
-                                    val_int = int(normalize_hex_input(val_str) or "0", 16)
-                                    if val_int >= (1 << field_info['length']):
-                                        error_msg = constants.MSG_VALUE_EXCEEDS_WIDTH.format(value=val_str, field_id=name, length=field_info['length'])
-                                    else:
-                                        i2c_ops, vals_to_confirm = self.register_map.set_logical_field_value(name, val_int)
-                                        if not i2c_ops: self.log_message_signal.emit(f"  Register '{name}' 값 변경 없음 (이미 {val_str})."); step_success = True
+                # Proceed only if no error from placeholder resolution
+                if current_step_success_flag:
+                    try:
+                        current_conditions_with_loops = self._get_current_conditions() # 모든 활성 루프 변수 포함
+                        
+                        # ... (기존 SimpleActionItem 타입에 따른 실행 로직) ...
+                        # 예: I2C_WRITE_NAME
+                        if action_type == constants.SEQ_PREFIX_I2C_WRITE_NAME:
+                            name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME)
+                            val_str_from_params = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
+                            
+                            val_str = str(val_str_from_params) 
+
+                            if self.i2c_device and self.register_map and name and val_str:
+                                field_info = self.register_map.logical_fields_map.get(name)
+                                if not field_info: error_msg = constants.MSG_FIELD_ID_NOT_FOUND.format(field_id=name)
+                                else:
+                                    try:
+                                        # 루프 변수가 val_str을 대체해야 하는 경우, 여기서 처리.
+                                        # 예를 들어, 루프 변수명이 params[VALUE_FIELD_NAME_IN_LOOP_DEF] 와 같다면,
+                                        # val_str = str(current_loop_context[params[VALUE_FIELD_NAME_IN_LOOP_DEF]])
+                                        # 현재는 루프 변수가 val_str을 직접 대체하지 않음. SequencePlayer의 _get_current_conditions에만 포함.
+                                        val_int = int(normalize_hex_input(val_str) or "0", 16)
+                                        if val_int >= (1 << field_info['length']):
+                                            error_msg = constants.MSG_VALUE_EXCEEDS_WIDTH.format(value=val_str, field_id=name, length=field_info['length'])
                                         else:
-                                            all_writes_ok = True
-                                            for op_addr, op_val in i2c_ops:
-                                                op_val_hex = f"0x{op_val:02X}"
-                                                if not self.i2c_device.write(op_addr, op_val_hex):
-                                                    all_writes_ok = False; error_msg += f"I2C Write 실패 (Addr: {op_addr}, Val: {op_val_hex}); "; break
-                                            if all_writes_ok:
-                                                self.register_map.confirm_address_values_update(vals_to_confirm)
-                                                self.log_message_signal.emit(f"  Register '{name}'에 {val_str} 쓰기 완료."); step_success = True
-                                except ValueError: error_msg = constants.MSG_CANNOT_PARSE_HEX_FOR_FIELD.format(value=val_str)
-                        elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
-                        elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
-                        else: error_msg = "Name/Value 파라미터 누락"
-                    
-                    # ... (다른 SimpleActionItem 타입들 처리 - measurement_result_signal 호출 시 current_conditions_with_loops 사용) ...
-                    elif action_type == constants.SEQ_PREFIX_I2C_READ_NAME:
-                        name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
-                        if self.register_map and name and var_name:
-                            read_val_hex = self.register_map.get_logical_field_value_hex(name, from_initial=False)
-                            if constants.HEX_ERROR_NO_FIELD in read_val_hex or constants.HEX_ERROR_CONVERSION in read_val_hex : error_msg = f"Register '{name}' 읽기 오류: {read_val_hex}"
-                            else: self.measurement_result_signal.emit(var_name, read_val_hex, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Register '{name}' 읽기 값: {read_val_hex} (저장 변수: {var_name})"); step_success = True
-                        elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
-                        else: error_msg = "Name/Variable 파라미터 누락"
-                    
-                    elif action_type == constants.SEQ_PREFIX_I2C_WRITE_ADDR:
-                        addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS)
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
-                        if self.i2c_device and addr and val_str:
-                            norm_addr = normalize_hex_input(addr, 4) # Ensure 4 hex chars for address
-                            norm_val = normalize_hex_input(val_str, 2) # Ensure 2 hex chars for value
-                            if norm_addr is None: error_msg = f"잘못된 주소 형식: {addr}"
-                            elif norm_val is None: error_msg = f"잘못된 값 형식: {val_str}"
-                            else:
-                                if self.i2c_device.write(norm_addr, norm_val):
-                                    if self.register_map: # register_map이 있는 경우에만 값 업데이트 시도
-                                        try:
-                                            val_int_for_map = int(norm_val, 16)
-                                            self.register_map.confirm_address_values_update({norm_addr: val_int_for_map})
-                                        except ValueError:
-                                            self.log_message_signal.emit(f"  Warning: I2C_WRITE_ADDR - '{norm_val}'을 register_map 업데이트를 위해 int로 변환 실패.")
-                                    self.log_message_signal.emit(f"  I2C Write Addr: {norm_addr}, 값: {norm_val} 쓰기 완료."); step_success = True
-                                else: error_msg = f"I2C Write 실패 (Addr: {norm_addr}, Val: {norm_val})"
-                        elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
-                        else: error_msg = "Address/Value 파라미터 누락"
-                    
-                    elif action_type == constants.SEQ_PREFIX_I2C_READ_ADDR:
-                        addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
-                        if self.i2c_device and self.register_map and addr and var_name:
-                            norm_addr = normalize_hex_input(addr, 4)
-                            if norm_addr is None: error_msg = f"잘못된 주소 형식: {addr}"
-                            else:
-                                read_hw_success, read_val_int = self.i2c_device.read(norm_addr)
-                                if read_hw_success and read_val_int is not None:
-                                    self.register_map.confirm_address_values_update({norm_addr: read_val_int})
-                                    read_val_hex = f"0x{read_val_int:02X}"
-                                    self.measurement_result_signal.emit(var_name, read_val_hex, self.sample_number, current_conditions_with_loops)
-                                    self.log_message_signal.emit(f"  I2C Read Addr: {norm_addr}, 값: {read_val_hex} (저장 변수: {var_name})"); step_success = True
-                                else: error_msg = f"I2C Read 실패 (Addr: {norm_addr})"
-                        elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
-                        elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
-                        else: error_msg = "Address/Variable 파라미터 누락"
-                    
-                    elif action_type == constants.SEQ_PREFIX_MM_MEAS_V:
-                        var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
-                        if self.multimeter and self.settings.get("multimeter_use") and var_name:
-                            s, v = self.multimeter.measure_voltage()
-                            if s and v is not None: self.measurement_result_signal.emit(var_name, v, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter V: {v:.6f} (Var: {var_name})"); step_success = True
-                            else: error_msg = "Multimeter 전압 측정 실패"
-                        elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
-                        elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
-                        else: error_msg = "변수명 누락"
-                    elif action_type == constants.SEQ_PREFIX_MM_MEAS_I:
-                        var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
-                        if self.multimeter and self.settings.get("multimeter_use") and var_name:
-                            s, curr = self.multimeter.measure_current()
-                            if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter I: {curr:.6e} (Var: {var_name})"); step_success = True
-                            else: error_msg = "Multimeter 전류 측정 실패"
-                        elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
-                        elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
-                        else: error_msg = "변수명 누락"
+                                            i2c_ops, vals_to_confirm = self.register_map.set_logical_field_value(name, val_int)
+                                            if not i2c_ops: self.log_message_signal.emit(f"  Register '{name}' 값 변경 없음 (이미 {val_str})."); step_success = True
+                                            else:
+                                                all_writes_ok = True
+                                                for op_addr, op_val in i2c_ops:
+                                                    op_val_hex = f"0x{op_val:02X}"
+                                                    if not self.i2c_device.write(op_addr, op_val_hex):
+                                                        all_writes_ok = False; error_msg += f"I2C Write 실패 (Addr: {op_addr}, Val: {op_val_hex}); "; break
+                                                if all_writes_ok:
+                                                    self.register_map.confirm_address_values_update(vals_to_confirm)
+                                                    self.log_message_signal.emit(f"  Register '{name}'에 {val_str} 쓰기 완료."); step_success = True
+                                    except ValueError: error_msg = constants.MSG_CANNOT_PARSE_HEX_FOR_FIELD.format(value=val_str)
+                            elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
+                            elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
+                            else: error_msg = "Name/Value 파라미터 누락"
+                        
+                        # ... (다른 SimpleActionItem 타입들 처리 - measurement_result_signal 호출 시 current_conditions_with_loops 사용) ...
+                        elif action_type == constants.SEQ_PREFIX_I2C_READ_NAME:
+                            name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            if self.register_map and name and var_name:
+                                read_val_hex = self.register_map.get_logical_field_value_hex(name, from_initial=False)
+                                if constants.HEX_ERROR_NO_FIELD in read_val_hex or constants.HEX_ERROR_CONVERSION in read_val_hex : error_msg = f"Register '{name}' 읽기 오류: {read_val_hex}"
+                                else: self.measurement_result_signal.emit(var_name, read_val_hex, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Register '{name}' 읽기 값: {read_val_hex} (저장 변수: {var_name})"); step_success = True
+                            elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
+                            else: error_msg = "Name/Variable 파라미터 누락"
+                        
+                        elif action_type == constants.SEQ_PREFIX_I2C_WRITE_ADDR:
+                            addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS)
+                            val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
+                            if self.i2c_device and addr and val_str:
+                                norm_addr = normalize_hex_input(addr, 4) # Ensure 4 hex chars for address
+                                norm_val = normalize_hex_input(val_str, 2) # Ensure 2 hex chars for value
+                                if norm_addr is None: error_msg = f"잘못된 주소 형식: {addr}"
+                                elif norm_val is None: error_msg = f"잘못된 값 형식: {val_str}"
+                                else:
+                                    if self.i2c_device.write(norm_addr, norm_val):
+                                        if self.register_map: # register_map이 있는 경우에만 값 업데이트 시도
+                                            try:
+                                                val_int_for_map = int(norm_val, 16)
+                                                self.register_map.confirm_address_values_update({norm_addr: val_int_for_map})
+                                            except ValueError:
+                                                self.log_message_signal.emit(f"  Warning: I2C_WRITE_ADDR - '{norm_val}'을 register_map 업데이트를 위해 int로 변환 실패.")
+                                        self.log_message_signal.emit(f"  I2C Write Addr: {norm_addr}, 값: {norm_val} 쓰기 완료."); step_success = True
+                                    else: error_msg = f"I2C Write 실패 (Addr: {norm_addr}, Val: {norm_val})"
+                            elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
+                            else: error_msg = "Address/Value 파라미터 누락"
+                        
+                        elif action_type == constants.SEQ_PREFIX_I2C_READ_ADDR:
+                            addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            if self.i2c_device and self.register_map and addr and var_name:
+                                norm_addr = normalize_hex_input(addr, 4)
+                                if norm_addr is None: error_msg = f"잘못된 주소 형식: {addr}"
+                                else:
+                                    read_hw_success, read_val_int = self.i2c_device.read(norm_addr)
+                                    if read_hw_success and read_val_int is not None:
+                                        self.register_map.confirm_address_values_update({norm_addr: read_val_int})
+                                        read_val_hex = f"0x{read_val_int:02X}"
+                                        self.measurement_result_signal.emit(var_name, read_val_hex, self.sample_number, current_conditions_with_loops)
+                                        self.log_message_signal.emit(f"  I2C Read Addr: {norm_addr}, 값: {read_val_hex} (저장 변수: {var_name})"); step_success = True
+                                    else: error_msg = f"I2C Read 실패 (Addr: {norm_addr})"
+                            elif not self.i2c_device: error_msg = "I2C 장치가 초기화되지 않았습니다."
+                            elif not self.register_map: error_msg = constants.MSG_NO_REGMAP_LOADED
+                            else: error_msg = "Address/Variable 파라미터 누락"
+                        
+                        elif action_type == constants.SEQ_PREFIX_MM_MEAS_V:
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            if self.multimeter and self.settings.get("multimeter_use") and var_name:
+                                s, v = self.multimeter.measure_voltage()
+                                if s and v is not None: self.measurement_result_signal.emit(var_name, v, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter V: {v:.6f} (Var: {var_name})"); step_success = True
+                                else: error_msg = "Multimeter 전압 측정 실패"
+                            elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
+                            elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
+                            else: error_msg = "변수명 누락"
+                        elif action_type == constants.SEQ_PREFIX_MM_MEAS_I:
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            if self.multimeter and self.settings.get("multimeter_use") and var_name:
+                                s, curr = self.multimeter.measure_current()
+                                if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter I: {curr:.6e} (Var: {var_name})"); step_success = True
+                            elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
+                            elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
+                            else: error_msg = "변수명 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_MM_SET_TERMINAL:
-                        term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL)
-                        if self.multimeter and self.settings.get("multimeter_use") and term:
-                            step_success = self.multimeter.set_terminal(term)
-                            if step_success: self.log_message_signal.emit(f"  Multimeter 터미널 {term}으로 설정.")
-                            else: error_msg = f"Multimeter 터미널 설정 실패 ({term})"
-                        elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
-                        elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
-                        else: error_msg = "터미널 파라미터 누락"
+                        elif action_type == constants.SEQ_PREFIX_MM_SET_TERMINAL:
+                            term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL)
+                            if self.multimeter and self.settings.get("multimeter_use") and term:
+                                step_success = self.multimeter.set_terminal(term)
+                                if step_success: self.log_message_signal.emit(f"  Multimeter 터미널 {term}으로 설정.")
+                                else: error_msg = f"Multimeter 터미널 설정 실패 ({term})"
+                            elif not self.settings.get("multimeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Multimeter")
+                            elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
+                            else: error_msg = "터미널 파라미터 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_SM_SET_V:
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
-                        if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
-                            try: 
-                                val_float = float(val_str)
-                                step_success = self.sourcemeter.set_voltage(val_float, term) 
-                                if step_success: self.log_message_signal.emit(f"  SM Set V: {val_float:.3f}V on {term}")
-                                else: error_msg = f"SM 전압 설정 실패 ({val_float}V, {term})"
-                            except ValueError: error_msg = f"SM 전압 값 '{val_str}' 오류"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "값 파라미터 누락"
-                    
-                    elif action_type == constants.SEQ_PREFIX_SM_SET_I:
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
-                        if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
-                            try: 
-                                val_float = float(val_str)
-                                step_success = self.sourcemeter.set_current(val_float, term) 
-                                if step_success: self.log_message_signal.emit(f"  SM Set I: {val_float:.3e}A on {term}")
-                                else: error_msg = f"SM 전류 설정 실패 ({val_float}A, {term})"
-                            except ValueError: error_msg = f"SM 전류 값 '{val_str}' 오류"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "값 파라미터 누락"
+                        elif action_type == constants.SEQ_PREFIX_SM_SET_V:
+                            val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
+                            if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
+                                try: 
+                                    val_float = float(val_str)
+                                    step_success = self.sourcemeter.set_voltage(val_float, term) 
+                                    if step_success: self.log_message_signal.emit(f"  SM Set V: {val_float:.3f}V on {term}")
+                                    else: error_msg = f"SM 전압 설정 실패 ({val_float}V, {term})"
+                                except ValueError: error_msg = f"SM 전압 값 '{val_str}' 오류"
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "값 파라미터 누락"
+                        
+                        elif action_type == constants.SEQ_PREFIX_SM_SET_I:
+                            val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
+                            if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
+                                try: 
+                                    val_float = float(val_str)
+                                    step_success = self.sourcemeter.set_current(val_float, term) 
+                                    if step_success: self.log_message_signal.emit(f"  SM Set I: {val_float:.3e}A on {term}")
+                                    else: error_msg = f"SM 전류 설정 실패 ({val_float}A, {term})"
+                                except ValueError: error_msg = f"SM 전류 값 '{val_str}' 오류"
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "값 파라미터 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_SM_MEAS_I:
-                        var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
-                        if self.sourcemeter and self.settings.get("sourcemeter_use") and var_name:
-                            s, curr = self.sourcemeter.measure_current(term)
-                            if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  SM I ({term}): {curr:.4e} (Var: {var_name})"); step_success = True
-                            else: error_msg = f"SM 전류 측정 실패 ({term})"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "변수명 누락"
+                        elif action_type == constants.SEQ_PREFIX_SM_MEAS_I:
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
+                            if self.sourcemeter and self.settings.get("sourcemeter_use") and var_name:
+                                s, curr = self.sourcemeter.measure_current(term)
+                                if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  SM I ({term}): {curr:.4e} (Var: {var_name})"); step_success = True
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "변수명 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_SM_ENABLE_OUTPUT:
-                        state_str = modified_params.get(constants.SEQ_PARAM_KEY_STATE, "TRUE").upper()
-                        if self.sourcemeter and self.settings.get("sourcemeter_use"):
-                            state_bool = (state_str == "TRUE"); step_success = self.sourcemeter.enable_output(state_bool)
-                            if step_success: self.log_message_signal.emit(f"  SM Output: {state_str}")
-                            else: error_msg = f"SM 출력 상태 변경 실패 ({state_str})"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "상태 파라미터 누락" 
+                        elif action_type == constants.SEQ_PREFIX_SM_ENABLE_OUTPUT:
+                            state_str = modified_params.get(constants.SEQ_PARAM_KEY_STATE, "TRUE").upper()
+                            if self.sourcemeter and self.settings.get("sourcemeter_use"):
+                                state_bool = (state_str == "TRUE"); step_success = self.sourcemeter.enable_output(state_bool)
+                                if step_success: self.log_message_signal.emit(f"  SM Output: {state_str}")
+                                else: error_msg = f"SM 출력 상태 변경 실패 ({state_str})"
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "상태 파라미터 누락" 
 
-                    elif action_type == constants.SEQ_PREFIX_SM_SET_TERMINAL:
-                        term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL)
-                        if self.sourcemeter and self.settings.get("sourcemeter_use") and term:
-                            step_success = self.sourcemeter.set_terminal(term)
-                            if step_success: self.log_message_signal.emit(f"  SM 터미널 {term}으로 설정.")
-                            else: error_msg = f"SM 터미널 설정 실패 ({term})"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "터미널 파라미터 누락"
+                        elif action_type == constants.SEQ_PREFIX_SM_SET_TERMINAL:
+                            term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL)
+                            if self.sourcemeter and self.settings.get("sourcemeter_use") and term:
+                                step_success = self.sourcemeter.set_terminal(term)
+                                if step_success: self.log_message_signal.emit(f"  SM 터미널 {term}으로 설정.")
+                                else: error_msg = f"SM 터미널 설정 실패 ({term})"
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "터미널 파라미터 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_SM_SET_PROTECTION_I:
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_CURRENT_LIMIT)
-                        if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
-                            try:
-                                limit_float = float(val_str)
-                                step_success = self.sourcemeter.set_protection_current(limit_float)
-                                if step_success: self.log_message_signal.emit(f"  SM Protection Current: {limit_float:.3e}A")
-                                else: error_msg = f"SM 보호 전류 설정 실패 ({limit_float:.3e}A)"
-                            except ValueError: error_msg = f"SM 보호 전류 값 '{val_str}' 오류"
-                        elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
-                        elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
-                        else: error_msg = "전류 제한 값 파라미터 누락"
+                        elif action_type == constants.SEQ_PREFIX_SM_SET_PROTECTION_I:
+                            val_str = modified_params.get(constants.SEQ_PARAM_KEY_CURRENT_LIMIT)
+                            if self.sourcemeter and self.settings.get("sourcemeter_use") and val_str:
+                                try:
+                                    limit_float = float(val_str)
+                                    step_success = self.sourcemeter.set_protection_current(limit_float)
+                                    if step_success: self.log_message_signal.emit(f"  SM Protection Current: {limit_float:.3e}A")
+                                    else: error_msg = f"SM 보호 전류 설정 실패 ({limit_float:.3e}A)"
+                                except ValueError: error_msg = f"SM 보호 전류 값 '{val_str}' 오류"
+                            elif not self.settings.get("sourcemeter_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Sourcemeter")
+                            elif not self.sourcemeter: error_msg = "Sourcemeter가 초기화되지 않았습니다."
+                            else: error_msg = "전류 제한 값 파라미터 누락"
 
-                    elif action_type == constants.SEQ_PREFIX_CHAMBER_SET_TEMP:
-                        val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
-                        if self.chamber and self.settings.get("chamber_use") and val_str:
-                            try:
-                                temp_float = float(val_str)
-                                if self.chamber.set_target_temperature(temp_float): 
-                                    if self.chamber.start_operation():
-                                        self.log_message_signal.emit(f"  Chamber 목표 온도 {temp_float}°C 설정 및 동작 시작.")
-                                        step_success = True
-                                    else: error_msg = "Chamber 동작 시작 실패"
-                                else: error_msg = f"Chamber 목표 온도 설정 실패 ({temp_float}°C)"
-                            except ValueError: error_msg = f"Chamber 온도 값 '{val_str}' 오류"
-                        elif not self.settings.get("chamber_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Chamber")
-                        elif not self.chamber: error_msg = "Chamber가 초기화되지 않았습니다."
-                        else: error_msg = "온도 값 파라미터 누락"
-                    
-                    elif action_type == constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP:
-                        target_temp_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
-                        timeout_str = modified_params.get(constants.SEQ_PARAM_KEY_TIMEOUT, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC))
-                        tolerance_str = modified_params.get(constants.SEQ_PARAM_KEY_TOLERANCE, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG))
+                        elif action_type == constants.SEQ_PREFIX_CHAMBER_SET_TEMP:
+                            val_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
+                            if self.chamber and self.settings.get("chamber_use") and val_str:
+                                try:
+                                    temp_float = float(val_str)
+                                    if self.chamber.set_target_temperature(temp_float): 
+                                        if self.chamber.start_operation():
+                                            self.log_message_signal.emit(f"  Chamber 목표 온도 {temp_float}°C 설정 및 동작 시작.")
+                                            step_success = True
+                                        else: error_msg = "Chamber 동작 시작 실패"
+                                    else: error_msg = f"Chamber 목표 온도 설정 실패 ({temp_float}°C)"
+                                except ValueError: error_msg = f"Chamber 온도 값 '{val_str}' 오류"
+                            elif not self.settings.get("chamber_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Chamber")
+                            elif not self.chamber: error_msg = "Chamber가 초기화되지 않았습니다."
+                            else: error_msg = "온도 값 파라미터 누락"
+                        
+                        elif action_type == constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP:
+                            target_temp_str = modified_params.get(constants.SEQ_PARAM_KEY_VALUE)
+                            timeout_str = modified_params.get(constants.SEQ_PARAM_KEY_TIMEOUT, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC))
+                            tolerance_str = modified_params.get(constants.SEQ_PARAM_KEY_TOLERANCE, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG))
 
-                        if self.chamber and self.settings.get("chamber_use") and target_temp_str:
-                            try:
-                                target_temp_float = float(target_temp_str); timeout_float = float(timeout_str); tolerance_float = float(tolerance_str)
-                                is_stable, last_temp = self.chamber.is_temperature_stable(target_temp_float, tolerance_float, timeout_float)
-                                
-                                if self.request_stop_flag: error_msg = "온도 안정화 대기 중 중단됨."
-                                elif is_stable: self.log_message_signal.emit(constants.MSG_CHAMBER_TEMP_STABLE.format(target_temp=target_temp_float, current_temp=last_temp if last_temp is not None else "N/A")); step_success = True
-                                else: error_msg = constants.MSG_CHAMBER_TEMP_TIMEOUT.format(target_temp=target_temp_float, current_temp=last_temp if last_temp is not None else "N/A", timeout=timeout_float)
-                            except ValueError: error_msg = "Chamber Check Temp 파라미터 숫자 변환 오류"
-                        elif not self.settings.get("chamber_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Chamber")
-                        elif not self.chamber: error_msg = "Chamber가 초기화되지 않았습니다."
-                        else: error_msg = "목표 온도 파라미터 누락"
-                    else:
-                         error_msg = f"알 수 없거나 아직 처리되지 않은 액션 타입: {action_type}"
+                            if self.chamber and self.settings.get("chamber_use") and target_temp_str:
+                                try:
+                                    target_temp_float = float(target_temp_str); timeout_float = float(timeout_str); tolerance_float = float(tolerance_str)
+                                    is_stable, last_temp = self.chamber.is_temperature_stable(target_temp_float, tolerance_float, timeout_float)
+                                    
+                                    if self.request_stop_flag: error_msg = "온도 안정화 대기 중 중단됨."
+                                    elif is_stable: self.log_message_signal.emit(constants.MSG_CHAMBER_TEMP_STABLE.format(target_temp=target_temp_float, current_temp=last_temp if last_temp is not None else "N/A")); step_success = True
+                                    else: error_msg = constants.MSG_CHAMBER_TEMP_TIMEOUT.format(target_temp=target_temp_float, current_temp=last_temp if last_temp is not None else "N/A", timeout=timeout_float)
+                                except ValueError: error_msg = "Chamber Check Temp 파라미터 숫자 변환 오류"
+                            elif not self.settings.get("chamber_use"): error_msg = constants.MSG_DEVICE_NOT_ENABLED.format(device_name="Chamber")
+                            elif not self.chamber: error_msg = "Chamber가 초기화되지 않았습니다."
+                            else: error_msg = "목표 온도 파라미터 누락"
+                        else:
+                             error_msg = f"알 수 없거나 아직 처리되지 않은 액션 타입: {action_type}"
 
-                except ConnectionError as ce: 
-                    error_msg = f"장비 연결 오류: {str(ce)}"
-                    step_success = False
-                except Exception as e:
-                    error_msg = f"실행 중 예외: {type(e).__name__} - {e}"
-                    step_success = False
-                    import traceback
-                    self.log_message_signal.emit(f"  Stack trace: {traceback.format_exc()}")
+                    except ConnectionError as ce: 
+                        error_msg = f"장비 연결 오류: {str(ce)}"
+                        current_step_success_flag = False # Update local flag
+                    except Exception as e:
+                        error_msg = f"실행 중 예외: {type(e).__name__} - {e}"
+                        current_step_success_flag = False # Update local flag
+                        import traceback
+                        self.log_message_signal.emit(f"  Stack trace: {traceback.format_exc()}")
+                
+                step_success = current_step_success_flag # Assign to the loop-level step_success
 
             if not step_success and not error_msg: 
                 error_msg = "알 수 없는 오류로 단계 실행 실패"

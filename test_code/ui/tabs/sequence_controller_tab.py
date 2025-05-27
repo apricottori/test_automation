@@ -588,9 +588,15 @@ class SequenceControllerTab(QWidget):
             if isinstance(item_data, dict):
                 # LoopActionItem의 경우, looped_actions도 재귀적으로 추출
                 if item_data.get("action_type") == "Loop":
-                    # 자식 아이템으로부터 looped_actions을 다시 구성
-                    item_data["looped_actions"] = self._get_sequence_data_from_tree(child_item)
-                items_data.append(item_data) # type: ignore
+                    # Ensure all loop parameters are preserved or reconstructed if necessary
+                    # from the dialog or its representation in the tree item's data.
+                    # The current item_data should already be the full LoopActionItem.
+                    # We just need to recursively get its children for `looped_actions`.
+                    current_loop_data = cast(LoopActionItem, item_data.copy()) # Make a copy to modify
+                    current_loop_data["looped_actions"] = self._get_sequence_data_from_tree(child_item)
+                    items_data.append(current_loop_data)
+                else:
+                    items_data.append(cast(SimpleActionItem, item_data)) # type: ignore
         return items_data
 
     @pyqtSlot()
@@ -899,8 +905,9 @@ class SequenceControllerTab(QWidget):
             if loop_dialog.exec_() == QDialog.Accepted:
                 updated_loop_data = loop_dialog.get_loop_parameters()
                 if updated_loop_data:
-                    item.setData(0, Qt.UserRole, updated_loop_data)
-                    item.setText(0, updated_loop_data.get("display_name", "Loop"))
+                    # Update the QTreeWidget item
+                    item.setData(0, Qt.UserRole, updated_loop_data) # Store the full new LoopActionItem
+                    item.setText(0, updated_loop_data.get("display_name", "Loop")) # Update display text
                     self.log_message(f"Loop '{item.text(0)}' updated.")
             # After dialog, whether accepted or not, disable update button unless re-selected
             # if self.update_action_button: self.update_action_button.setEnabled(False) 

@@ -86,9 +86,11 @@ class LoopActionItem(TypedDict):
     item_id: str
     action_type: Literal["Loop"] # Special type
     loop_variable_name: Optional[str] # Name of the variable being swept (e.g., \"Temperature\", \"VDD_Voltage\") - Optional if count-based
+    sweep_type: Optional[Literal["NumericRange", "ValueList", "FixedCount"]] # Type of sweep
     start_value: Optional[Any] # Can be float, int. Optional if count-based.
     stop_value: Optional[Any] # Optional if count-based.
     step_value: Optional[Any] # Optional if count-based.
+    value_list: Optional[List[Any]] # For list-based sweep.
     loop_count: Optional[int] # For fixed count loops. If present, start/stop/step might be ignored.
     looped_actions: List[Union['SimpleActionItem', 'LoopActionItem']] # Recursive definition for nested loops. Forward reference.
     display_name: Optional[str] # UI display, e.g., \"Loop: Temperature 25-85C step 10\"

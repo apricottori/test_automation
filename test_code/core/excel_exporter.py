@@ -12,7 +12,7 @@ class ExcelExporter:
         Args:
             results_df: 측정 결과가 담긴 DataFrame
         """
-        self.results_df = results_df
+        self.results_df = results_df.copy() # Work on a copy
         
     def export_to_excel(self, file_path: str, sheet_configs: List[ExcelSheetConfig]) -> bool:
         """
@@ -35,15 +35,23 @@ class ExcelExporter:
                     # 전역 필터 적용
                     filtered_df = self._apply_global_filters(self.results_df, config)
                     
-                    if config.get('dynamic_naming', False):
+                    if config.get('dynamic_naming', False) and config.get('dynamic_name_field'):
                         # 동적 시트 이름 처리
                         self._process_dynamic_sheets(filtered_df, config, writer)
                     else:
                         # 단일 시트 처리
                         sheet_name = config.get('sheet_name', 'Sheet')
-                        pivot_df = self._create_pivot_table(filtered_df, config)
-                        pivot_df.to_excel(writer, sheet_name=sheet_name)
+                        if not sheet_name: # Ensure a valid sheet name if fixed_name is empty
+                            sheet_name = f"Sheet_{config_idx + 1}"
                         
+                        # For fixed name sheets, apply index/column filters directly before pivoting
+                        data_for_pivot = self._apply_pivot_specific_filters(filtered_df, config)
+                        pivot_df = self._create_pivot_table(data_for_pivot, config)
+                        
+                        if not pivot_df.empty:
+                            pivot_df.to_excel(writer, sheet_name=sheet_name)
+                        else:
+                            print(f"Warning: Pivot table for sheet '{sheet_name}' is empty. Sheet not created.")
             return True
         except Exception as e:
             print(f"Error: Excel 내보내기 중 오류 발생: {e}")
@@ -59,35 +67,69 @@ class ExcelExporter:
         if not global_filters:
             return filtered_df
             
-        # 각 필터 조건 적용
-        for field, value in global_filters.items():
-            if field in filtered_df.columns:
-                if isinstance(value, list):
-                    filtered_df = filtered_df[filtered_df[field].isin(value)]
+        # 각 필터 조건 적용 (AND-ed)
+        current_df = filtered_df
+        for field, value_or_condition in global_filters.items():
+            if field not in current_df.columns:
+                print(f"Warning (Global Filter): Field '{field}' not found in DataFrame. Skipping this filter.")
+                continue
+            
+            if isinstance(value_or_condition, list): # Field IN ListOfValues
+                current_df = current_df[current_df[field].isin(value_or_condition)]
+            elif isinstance(value_or_condition, dict): # More complex condition e.g. {">": 10, "<=": 20}
+                # This part needs careful implementation for various operators
+                # For now, let's support a simple exact match if it's a dict with one op
+                # e.g. { "eq": 10 } or { "ne": 5 } or { ">": 0 }
+                # Or, if it's just a value, treat as exact match (covered by next elif)
+                # For this iteration, assuming simple dict format like {"operator": value}
+                # A more robust solution would involve a proper condition parser.
+                if len(value_or_condition) == 1:
+                    op, val = list(value_or_condition.items())[0]
+                    if op == 'eq': current_df = current_df[current_df[field] == val]
+                    elif op == 'ne': current_df = current_df[current_df[field] != val]
+                    elif op == 'gt': current_df = current_df[current_df[field] > val]
+                    elif op == 'lt': current_df = current_df[current_df[field] < val]
+                    elif op == 'gte': current_df = current_df[current_df[field] >= val]
+                    elif op == 'lte': current_df = current_df[current_df[field] <= val]
+                    # Add more operators as needed (contains, startswith, etc.)
+                    else: print(f"Warning (Global Filter): Unsupported operator '{op}' for field '{field}'.")
                 else:
-                    filtered_df = filtered_df[filtered_df[field] == value]
+                     print(f"Warning (Global Filter): Complex dictionary condition for field '{field}' not yet fully supported. Treating as exact match if possible or skipping.")
+                     # Fallback: if the dict itself can be matched, try it (unlikely for general case)
+                     # For now, we'll just skip if it's a multi-key dict not parsable
+            else: # Field == Value (exact match)
+                current_df = current_df[current_df[field] == value_or_condition]
                     
-        return filtered_df
-    
+        return current_df
+
+    def _apply_pivot_specific_filters(self, df: pd.DataFrame, config: ExcelSheetConfig) -> pd.DataFrame:
+        """Apply index_filters and column_filters to the DataFrame before pivoting."""
+        # This is a simplified version. In reality, these filters might be more complex if they
+        # refer to values that *will become* an index or column after pivoting.
+        # For now, we assume these filters apply to existing columns in `df`.
+        df_filtered = df.copy()
+        index_filters = config.get('index_filters', {})
+        column_filters = config.get('column_filters', {})
+
+        for field, values_to_keep in index_filters.items():
+            if field in df_filtered.columns and isinstance(values_to_keep, list) and values_to_keep:
+                df_filtered = df_filtered[df_filtered[field].isin(values_to_keep)]
+        
+        for field, values_to_keep in column_filters.items():
+            if field in df_filtered.columns and isinstance(values_to_keep, list) and values_to_keep:
+                df_filtered = df_filtered[df_filtered[field].isin(values_to_keep)]
+        
+        return df_filtered
+
     def _create_pivot_table(self, df: pd.DataFrame, config: ExcelSheetConfig) -> pd.DataFrame:
         """설정에 따라 피벗 테이블 생성"""
         index_fields = config.get('index_fields', [])
         column_fields = config.get('column_fields', [])
         value_field = config.get('value_field')
-        aggfunc = config.get('aggfunc', 'mean')
+        aggfunc_str = config.get('aggfunc', 'first') # Default to 'first' as per proposal
         
-        # 인덱스/컬럼 필터 적용
-        df_filtered = df.copy()
-        index_filters = config.get('index_filters', {})
-        column_filters = config.get('column_filters', {})
-        
-        for field, values in index_filters.items():
-            if field in df_filtered.columns and values:
-                df_filtered = df_filtered[df_filtered[field].isin(values)]
-                
-        for field, values in column_filters.items():
-            if field in df_filtered.columns and values:
-                df_filtered = df_filtered[df_filtered[field].isin(values)]
+        # df_filtered is now the input df, as filters are applied before calling this
+        df_for_pivot = df.copy()
         
         # 집계 함수 설정
         agg_func_map = {
@@ -96,27 +138,27 @@ class ExcelExporter:
             'min': pd.DataFrame.min,
             'sum': pd.DataFrame.sum,
             'count': pd.DataFrame.count,
-            'first': lambda x: x.iloc[0] if not x.empty else None, # first/last 수정
+            'first': lambda x: x.iloc[0] if not x.empty else None,
             'last': lambda x: x.iloc[-1] if not x.empty else None,
             'median': pd.DataFrame.median,
             'std': pd.DataFrame.std
         }
         
-        actual_aggfunc = agg_func_map.get(aggfunc, pd.DataFrame.mean)
+        actual_aggfunc: Union[str, Callable, List[Callable], Dict[str, Any]] = agg_func_map.get(aggfunc_str, 'first')
         
         # 피벗 테이블 생성
-        if not value_field or value_field not in df_filtered.columns: # value_field 존재 여부 확인
+        if not value_field or value_field not in df_for_pivot.columns: # value_field 존재 여부 확인
             print(f"Warning (ExcelExporter): Value field '{value_field}' not found in filtered data for pivot. Returning empty DataFrame for this sheet part.")
             return pd.DataFrame() # 빈 DataFrame 반환
 
         if not index_fields and not column_fields: # 인덱스와 컬럼 필드가 모두 없으면 원본 반환 (또는 값 필드만 시리즈로)
-            if value_field and value_field in df_filtered.columns:
-                 return df_filtered[[value_field]] # 값 필드만 있는 DataFrame 반환
-            return df_filtered # 혹은 빈 DataFrame 반환 또는 오류 처리
+            if value_field and value_field in df_for_pivot.columns:
+                 return df_for_pivot[[value_field]] # 값 필드만 있는 DataFrame 반환
+            return df_for_pivot # 혹은 빈 DataFrame 반환 또는 오류 처리
             
         try:
             pivot_df = pd.pivot_table(
-                df_filtered,
+                df_for_pivot,
                 values=value_field,
                 index=index_fields if index_fields else None,
                 columns=column_fields if column_fields else None,
@@ -124,7 +166,7 @@ class ExcelExporter:
                 dropna=False # NaN 값 유지를 위해 dropna=False 추가
             )
         except Exception as e:
-            print(f"Error creating pivot table: {e}\nConfig: {config}\nData sample:\n{df_filtered.head()}")
+            print(f"Error creating pivot table: {e}\nConfig: {config}\nData sample:\n{df_for_pivot.head()}")
             # 오류 발생 시 빈 DataFrame 또는 특정 오류 DataFrame 반환
             return pd.DataFrame() 
         
@@ -141,9 +183,13 @@ class ExcelExporter:
         
         if not dynamic_field or dynamic_field not in df.columns:
             # 동적 필드가 없거나 유효하지 않은 경우 기본 시트 하나만 생성
-            sheet_name = config.get('sheet_name', 'Sheet_Dynamic_Fallback') # 기본 시트명 변경
-            pivot_df = self._create_pivot_table(df, config)
-            if not pivot_df.empty: # 피벗 테이블이 비어있지 않을 때만 저장
+            sheet_name = config.get('sheet_name', 'Sheet_Dynamic_Fallback') 
+            if not sheet_name: sheet_name = "Default_Sheet"
+            
+            data_for_pivot = self._apply_pivot_specific_filters(df, config)
+            pivot_df = self._create_pivot_table(data_for_pivot, config)
+
+            if not pivot_df.empty: 
                 pivot_df.to_excel(writer, sheet_name=sheet_name)
             return
             
@@ -165,8 +211,8 @@ class ExcelExporter:
                 safe_value_str = pd.io.common.validate_sheet_name(value_str) # pandas 유틸리티 사용
                 
                 temp_sheet_name_base = f"{prefix}{safe_value_str}" if prefix else safe_value_str
-                
-                filtered_df = df[df[dynamic_field] == value]
+                # Dynamic sheets are per unique value, so filter the main df for this value
+                current_dynamic_value_df = df[df[dynamic_field] == value]
             
             # 시트 이름 길이 제한 및 중복 처리
             final_sheet_name = temp_sheet_name_base[:31] # 길이 제한
@@ -185,6 +231,9 @@ class ExcelExporter:
             processed_sheet_names.add(final_sheet_name)
 
             # 필터링된 데이터로 피벗 테이블 생성
-            pivot_df = self._create_pivot_table(filtered_df, config)
-            if not pivot_df.empty: # 피벗 테이블이 비어있지 않을 때만 저장
+            # For dynamic sheets, pivot-specific filters might be less common or applied differently.
+            # Here, we apply them to the already dynamically-filtered subset.
+            data_for_pivot = self._apply_pivot_specific_filters(current_dynamic_value_df, config)
+            pivot_df = self._create_pivot_table(data_for_pivot, config)
+            if not pivot_df.empty: 
                  pivot_df.to_excel(writer, sheet_name=final_sheet_name) 

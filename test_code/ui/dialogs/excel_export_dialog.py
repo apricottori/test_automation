@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, 
     QLabel, QLineEdit, QComboBox, QCheckBox, QListWidget, 
     QListWidgetItem, QPushButton, QGroupBox, QFormLayout,
-    QDialogButtonBox, QMessageBox, QFileDialog, QSplitter
+    QDialogButtonBox, QMessageBox, QFileDialog, QSplitter, QScrollArea
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -51,8 +51,12 @@ class ExcelExportSettingsDialog(QDialog):
         self.aggfunc_combo: Optional[QComboBox] = None
         self.transpose_checkbox: Optional[QCheckBox] = None
 
-        # 필터 UI (간단한 형태 또는 추후 확장)
-        self.global_filter_button: Optional[QPushButton] = None # 예시: 전역 필터 설정 버튼
+        # 필터 UI
+        self.global_filters_group: Optional[QGroupBox] = None # For global filters
+        self.index_filters_group: Optional[QGroupBox] = None # For index-specific filters
+        self.column_filters_group: Optional[QGroupBox] = None # For column-specific filters
+        # These will need more complex UI to add/remove filter conditions dynamically.
+        # For now, placeholders or simplified input might be used.
 
         self.button_box: Optional[QDialogButtonBox] = None
         
@@ -98,6 +102,15 @@ class ExcelExportSettingsDialog(QDialog):
         right_form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         right_form_layout.setLabelAlignment(Qt.AlignRight)
 
+        # ScrollArea for right panel content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_content_widget = QWidget()
+        scroll_area.setWidget(scroll_content_widget)
+        right_form_layout = QFormLayout(scroll_content_widget) # Form layout inside scrollable content
+        right_form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        right_form_layout.setLabelAlignment(Qt.AlignRight)
+
         # 1. 시트 이름 설정
         naming_group = QGroupBox("Sheet Naming")
         naming_layout = QVBoxLayout(naming_group)
@@ -115,35 +128,62 @@ class ExcelExportSettingsDialog(QDialog):
         dynamic_naming_widget = QWidget(); dynamic_naming_widget.setLayout(dynamic_naming_sub_layout)
         naming_layout.addWidget(self.dynamic_name_checkbox)
         naming_layout.addWidget(dynamic_naming_widget)
-        right_form_layout.addRow(naming_group) # 그룹박스를 QFormLayout에 추가
+        right_form_layout.addRow(naming_group)
 
         # 2. 피벗 테이블 설정
         pivot_group = QGroupBox("Pivot Table Configuration")
-        pivot_form_layout = QFormLayout(pivot_group) # 그룹 내부에 QFormLayout 사용
-        self.index_fields_combo = QComboBox(); self.index_fields_combo.addItems(self.available_columns) # TODO: Multi-select 지원 UI 필요
-        self.column_fields_combo = QComboBox(); self.column_fields_combo.addItems(self.available_columns) # TODO: Multi-select 지원 UI 필요
+        pivot_form_layout = QFormLayout(pivot_group) 
+        
+        # For index_fields and column_fields, using QComboBox for single selection as per simplified UI.
+        # Data model supports List[str], so we'll store the selection as a single-item list.
+        self.index_fields_combo = QComboBox(); self.index_fields_combo.addItems([""] + self.available_columns) # Add empty option
+        self.column_fields_combo = QComboBox(); self.column_fields_combo.addItems([""] + self.available_columns) # Add empty option
+        
         self.value_field_combo = QComboBox(); self.value_field_combo.addItems(self.available_columns)
         self.aggfunc_combo = QComboBox(); self.aggfunc_combo.addItems(['first', 'last', 'mean', 'median', 'sum', 'min', 'max', 'count', 'std'])
         self.transpose_checkbox = QCheckBox("Transpose Result")
-        pivot_form_layout.addRow("Row Field(s):", self.index_fields_combo)
-        pivot_form_layout.addRow("Column Field(s):", self.column_fields_combo)
+        pivot_form_layout.addRow(constants.AVAILABLE_COLUMNS_LABEL.replace("Available","Row Field (Index):"), self.index_fields_combo) # Better label
+        pivot_form_layout.addRow(constants.AVAILABLE_COLUMNS_LABEL.replace("Available","Column Field:"), self.column_fields_combo) # Better label
         pivot_form_layout.addRow("Value Field:", self.value_field_combo)
         pivot_form_layout.addRow("Aggregation:", self.aggfunc_combo)
         pivot_form_layout.addRow(self.transpose_checkbox)
         right_form_layout.addRow(pivot_group)
 
-        # 3. 필터 설정 (간단화)
-        filter_group = QGroupBox("Data Filters (Future Enhancement)")
-        filter_layout = QVBoxLayout(filter_group)
-        self.global_filter_button = QPushButton("Define Global Filters (Not Implemented)"); self.global_filter_button.setEnabled(False)
-        # TODO: Add UI for index_filters, column_filters, global_filters
-        filter_layout.addWidget(QLabel("Advanced filtering per sheet will be added here."))
-        filter_layout.addWidget(self.global_filter_button)
-        right_form_layout.addRow(filter_group)
+        # 3. 필터 설정 (Placeholder for now, as per proposal's phased approach)
+        self.global_filters_group = QGroupBox("Global Data Filters (Selects data before pivoting)")
+        global_filters_layout = QVBoxLayout(self.global_filters_group)
+        # TODO: Implement dynamic UI for adding/removing global filter conditions: Field | Operator | Value
+        global_filters_layout.addWidget(QLabel("Global filter UI to be implemented here."))
+        self.global_filters_group.setEnabled(False) # Disable for now
+        right_form_layout.addRow(self.global_filters_group)
+
+        self.index_filters_group = QGroupBox("Index Value Filters (Filters specific row values after pivoting)")
+        index_filters_layout = QVBoxLayout(self.index_filters_group)
+        # TODO: Button to open a dialog for selecting unique values from the chosen index_field
+        index_filters_layout.addWidget(QLabel("Index value filter UI to be implemented here."))
+        self.index_filters_group.setEnabled(False) # Disable for now
+        right_form_layout.addRow(self.index_filters_group)
         
-        right_panel.setLayout(right_form_layout)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([250, 550]) # 초기 스플리터 크기
+        self.column_filters_group = QGroupBox("Column Value Filters (Filters specific column values after pivoting)")
+        column_filters_layout = QVBoxLayout(self.column_filters_group)
+        # TODO: Button to open a dialog for selecting unique values from the chosen column_field
+        column_filters_layout.addWidget(QLabel("Column value filter UI to be implemented here."))
+        self.column_filters_group.setEnabled(False) # Disable for now
+        right_form_layout.addRow(self.column_filters_group)
+        
+        # Original right_panel (without scroll) directly used right_form_layout
+        # Now, scroll_area contains scroll_content_widget, which has right_form_layout
+        # So, the parent of splitter.addWidget should be right_panel, and right_panel's layout should contain the scroll_area.
+
+        # Create a new top-level widget for the right side that will contain the scroll area
+        right_panel_container = QWidget()
+        right_panel_container_layout = QVBoxLayout(right_panel_container)
+        right_panel_container_layout.addWidget(scroll_area)
+        right_panel_container_layout.setContentsMargins(0,0,0,0) # Ensure container layout has no margins
+        
+        # Add the container to the splitter
+        splitter.addWidget(right_panel_container)
+        splitter.setSizes([250, 550])
 
         # --- 하단 버튼 --- 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -260,9 +300,13 @@ class ExcelExportSettingsDialog(QDialog):
         config['dynamic_name_field'] = self.dynamic_name_field_combo.currentText() if self.dynamic_name_field_combo else ''
         config['dynamic_name_prefix'] = self.dynamic_name_prefix_input.text() if self.dynamic_name_prefix_input else ''
         
-        # 피벗 설정 (단일 필드만 우선 지원)
-        config['index_fields'] = [self.index_fields_combo.currentText()] if self.index_fields_combo and self.index_fields_combo.currentText() else []
-        config['column_fields'] = [self.column_fields_combo.currentText()] if self.column_fields_combo and self.column_fields_combo.currentText() else []
+        # 피벗 설정 (단일 필드만 우선 지원, 리스트로 저장)
+        idx_field = self.index_fields_combo.currentText() if self.index_fields_combo else ''
+        config['index_fields'] = [idx_field] if idx_field else []
+        
+        col_field = self.column_fields_combo.currentText() if self.column_fields_combo else ''
+        config['column_fields'] = [col_field] if col_field else []
+        
         config['value_field'] = self.value_field_combo.currentText() if self.value_field_combo else ''
         config['aggfunc'] = self.aggfunc_combo.currentText() if self.aggfunc_combo else 'first'
         config['transpose'] = self.transpose_checkbox.isChecked() if self.transpose_checkbox else False

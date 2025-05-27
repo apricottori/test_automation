@@ -6,7 +6,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox,
     QDialogButtonBox, QMessageBox, QWidget, QSpinBox, QDoubleSpinBox, QGroupBox,
-    QRadioButton # QRadioButton 추가
+    QRadioButton, QHBoxLayout # QHBoxLayout 추가
 )
 from PyQt5.QtGui import QDoubleValidator
 
@@ -25,16 +25,28 @@ class LoopDefinitionDialog(QDialog):
 
         # UI 멤버 변수 선언
         self.loop_display_name_input: Optional[QLineEdit] = None
+        
+        # Loop Type Selection
+        self.loop_type_group: Optional[QGroupBox] = None
         self.value_sweep_radio: Optional[QRadioButton] = None
+        self.value_list_radio: Optional[QRadioButton] = None # New: ValueList
         self.fixed_count_radio: Optional[QRadioButton] = None
         
+        # Value Sweep (NumericRange) Parameters
         self.sweep_params_group: Optional[QGroupBox] = None
-        self.loop_variable_name_input: Optional[QLineEdit] = None
-        self.start_value_input: Optional[QLineEdit] = None # QDoubleSpinBox 대신 QLineEdit + QDoubleValidator 사용
+        self.sweep_loop_variable_name_input: Optional[QLineEdit] = None
+        self.start_value_input: Optional[QLineEdit] = None
         self.stop_value_input: Optional[QLineEdit] = None
         self.step_value_input: Optional[QLineEdit] = None
 
+        # Value List Parameters
+        self.list_params_group: Optional[QGroupBox] = None # New Group
+        self.list_loop_variable_name_input: Optional[QLineEdit] = None # New
+        self.value_list_input: Optional[QLineEdit] = None # New
+
+        # Fixed Count Parameters
         self.count_params_group: Optional[QGroupBox] = None 
+        self.count_loop_variable_name_input: Optional[QLineEdit] = None # New: Optional variable name for count loop
         self.loop_count_spinbox: Optional[QSpinBox] = None
 
         self.button_box: Optional[QDialogButtonBox] = None
@@ -45,73 +57,98 @@ class LoopDefinitionDialog(QDialog):
         if self.existing_data:
             self._load_existing_data()
         else:
-            if self.value_sweep_radio: self.value_sweep_radio.setChecked(True) # 기본 선택
+            if self.value_sweep_radio: self.value_sweep_radio.setChecked(True) # 기본 선택 NumericRange
         self._update_ui_for_loop_type()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        form_layout = QFormLayout() # Use QFormLayout for overall structure where appropriate
 
         self.loop_display_name_input = QLineEdit()
         self.loop_display_name_input.setPlaceholderText("e.g., Temperature Sweep 25-85C")
         form_layout.addRow("Loop Display Name (Optional):", self.loop_display_name_input)
 
         # --- Loop Type Selection --- 
-        loop_type_group = QGroupBox("Loop Type")
-        loop_type_layout = QVBoxLayout(loop_type_group)
-        self.value_sweep_radio = QRadioButton("Variable Value Sweep")
+        self.loop_type_group = QGroupBox("Loop Type")
+        loop_type_vbox = QVBoxLayout(self.loop_type_group) # Use QVBoxLayout inside group
+        self.value_sweep_radio = QRadioButton("Numeric Range Sweep")
+        self.value_list_radio = QRadioButton("List of Values Sweep")
         self.fixed_count_radio = QRadioButton("Fixed Number of Iterations")
-        loop_type_layout.addWidget(self.value_sweep_radio)
-        loop_type_layout.addWidget(self.fixed_count_radio)
-        form_layout.addRow(loop_type_group)
+        loop_type_vbox.addWidget(self.value_sweep_radio)
+        loop_type_vbox.addWidget(self.value_list_radio)
+        loop_type_vbox.addWidget(self.fixed_count_radio)
+        form_layout.addRow(self.loop_type_group)
 
-        # --- Value Sweep Parameters --- 
-        self.sweep_params_group = QGroupBox("Value Sweep Parameters")
-        sweep_layout = QFormLayout(self.sweep_params_group)
-        self.loop_variable_name_input = QLineEdit()
-        self.loop_variable_name_input.setPlaceholderText("e.g., Temperature, VDD_Voltage (no spaces)")
+        # --- Numeric Range Sweep Parameters --- 
+        self.sweep_params_group = QGroupBox("Numeric Range Sweep Parameters")
+        sweep_form_layout = QFormLayout(self.sweep_params_group)
+        self.sweep_loop_variable_name_input = QLineEdit()
+        self.sweep_loop_variable_name_input.setPlaceholderText("e.g., Temperature, VDD_Voltage (no spaces)")
         self.start_value_input = QLineEdit(); self.start_value_input.setValidator(self._double_validator)
         self.stop_value_input = QLineEdit(); self.stop_value_input.setValidator(self._double_validator)
         self.step_value_input = QLineEdit(); self.step_value_input.setValidator(self._double_validator)
-        sweep_layout.addRow("Loop Variable Name:", self.loop_variable_name_input)
-        sweep_layout.addRow("Start Value:", self.start_value_input)
-        sweep_layout.addRow("Stop Value:", self.stop_value_input)
-        sweep_layout.addRow("Step Value:", self.step_value_input)
-        form_layout.addRow(self.sweep_params_group)
+        sweep_form_layout.addRow("Loop Variable Name:", self.sweep_loop_variable_name_input)
+        sweep_form_layout.addRow("Start Value:", self.start_value_input)
+        sweep_form_layout.addRow("Stop Value:", self.stop_value_input)
+        sweep_form_layout.addRow("Step Value:", self.step_value_input)
+        main_layout.addWidget(self.sweep_params_group) # Add group directly to main_layout
+
+        # --- Value List Sweep Parameters ---
+        self.list_params_group = QGroupBox("List of Values Sweep Parameters")
+        list_form_layout = QFormLayout(self.list_params_group)
+        self.list_loop_variable_name_input = QLineEdit()
+        self.list_loop_variable_name_input.setPlaceholderText("e.g., DAC_Setting, Mode")
+        self.value_list_input = QLineEdit()
+        self.value_list_input.setPlaceholderText("Comma-separated values (e.g., 1.0, 1.5, 2.0 or High,Mid,Low)")
+        list_form_layout.addRow("Loop Variable Name:", self.list_loop_variable_name_input)
+        list_form_layout.addRow("Values (comma-separated):", self.value_list_input)
+        main_layout.addWidget(self.list_params_group)
 
         # --- Fixed Count Parameters --- 
         self.count_params_group = QGroupBox("Fixed Count Parameters")
-        count_layout = QFormLayout(self.count_params_group)
+        count_form_layout = QFormLayout(self.count_params_group)
+        self.count_loop_variable_name_input = QLineEdit()
+        self.count_loop_variable_name_input.setPlaceholderText("Optional: e.g., IterationCounter (no spaces)")
         self.loop_count_spinbox = QSpinBox()
         self.loop_count_spinbox.setMinimum(1)
-        self.loop_count_spinbox.setMaximum(1000000) # 충분히 큰 값
+        self.loop_count_spinbox.setMaximum(1000000) 
         self.loop_count_spinbox.setValue(10)
-        count_layout.addRow("Number of Iterations:", self.loop_count_spinbox)
-        form_layout.addRow(self.count_params_group)
+        count_form_layout.addRow("Loop Variable Name (Optional):", self.count_loop_variable_name_input)
+        count_form_layout.addRow("Number of Iterations:", self.loop_count_spinbox)
+        main_layout.addWidget(self.count_params_group)
         
-        main_layout.addLayout(form_layout)
+        main_layout.addLayout(form_layout) # Add the main form layout (with display name and loop type group)
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         main_layout.addWidget(self.button_box)
 
     def _connect_signals(self):
         if self.value_sweep_radio: self.value_sweep_radio.toggled.connect(self._update_ui_for_loop_type)
+        if self.value_list_radio: self.value_list_radio.toggled.connect(self._update_ui_for_loop_type)
         if self.fixed_count_radio: self.fixed_count_radio.toggled.connect(self._update_ui_for_loop_type)
         if self.button_box: 
             self.button_box.accepted.connect(self.accept)
             self.button_box.rejected.connect(self.reject)
 
     def _update_ui_for_loop_type(self):
-        is_sweep = self.value_sweep_radio.isChecked() if self.value_sweep_radio else False
+        is_sweep_range = self.value_sweep_radio.isChecked() if self.value_sweep_radio else False
+        is_sweep_list = self.value_list_radio.isChecked() if self.value_list_radio else False
         is_count = self.fixed_count_radio.isChecked() if self.fixed_count_radio else False
 
-        if self.sweep_params_group: self.sweep_params_group.setEnabled(is_sweep)
-        if self.count_params_group: self.count_params_group.setEnabled(is_count)
+        if self.sweep_params_group: self.sweep_params_group.setVisible(is_sweep_range)
+        if self.list_params_group: self.list_params_group.setVisible(is_sweep_list)
+        if self.count_params_group: self.count_params_group.setVisible(is_count)
         
-        # 만약 라디오 버튼이 서로 배타적으로 동작하지 않는다면, 한쪽이 선택될 때 다른 쪽을 해제
-        if is_sweep and self.fixed_count_radio and self.fixed_count_radio.isChecked():
-            self.fixed_count_radio.setChecked(False)
-        elif is_count and self.value_sweep_radio and self.value_sweep_radio.isChecked():
-            self.value_sweep_radio.setChecked(False)
+        # Ensure only one radio button is checked
+        if is_sweep_range:
+            if self.value_list_radio and self.value_list_radio.isChecked(): self.value_list_radio.setChecked(False)
+            if self.fixed_count_radio and self.fixed_count_radio.isChecked(): self.fixed_count_radio.setChecked(False)
+        elif is_sweep_list:
+            if self.value_sweep_radio and self.value_sweep_radio.isChecked(): self.value_sweep_radio.setChecked(False)
+            if self.fixed_count_radio and self.fixed_count_radio.isChecked(): self.fixed_count_radio.setChecked(False)
+        elif is_count:
+            if self.value_sweep_radio and self.value_sweep_radio.isChecked(): self.value_sweep_radio.setChecked(False)
+            if self.value_list_radio and self.value_list_radio.isChecked(): self.value_list_radio.setChecked(False)
+        self.adjustSize() # Adjust dialog size to content
 
     def _load_existing_data(self):
         if not self.existing_data: return
@@ -119,85 +156,135 @@ class LoopDefinitionDialog(QDialog):
 
         if self.loop_display_name_input: self.loop_display_name_input.setText(data.get("display_name", ""))
 
-        is_count_loop = data.get("loop_count") is not None
-        if self.value_sweep_radio: self.value_sweep_radio.setChecked(not is_count_loop)
-        if self.fixed_count_radio: self.fixed_count_radio.setChecked(is_count_loop)
+        sweep_type = data.get("sweep_type")
 
-        if not is_count_loop: # Value Sweep
-            if self.loop_variable_name_input: self.loop_variable_name_input.setText(data.get("loop_variable_name", ""))
+        if sweep_type == "NumericRange":
+            if self.value_sweep_radio: self.value_sweep_radio.setChecked(True)
+            if self.sweep_loop_variable_name_input: self.sweep_loop_variable_name_input.setText(data.get("loop_variable_name", ""))
             if self.start_value_input: self.start_value_input.setText(str(data.get("start_value", "")))
             if self.stop_value_input: self.stop_value_input.setText(str(data.get("stop_value", "")))
             if self.step_value_input: self.step_value_input.setText(str(data.get("step_value", "")))
-        else: # Fixed Count
+        elif sweep_type == "ValueList":
+            if self.value_list_radio: self.value_list_radio.setChecked(True)
+            if self.list_loop_variable_name_input: self.list_loop_variable_name_input.setText(data.get("loop_variable_name", ""))
+            value_list = data.get("value_list", [])
+            if self.value_list_input: self.value_list_input.setText(", ".join(map(str, value_list)))
+        elif sweep_type == "FixedCount":
+            if self.fixed_count_radio: self.fixed_count_radio.setChecked(True)
             if self.loop_count_spinbox: self.loop_count_spinbox.setValue(data.get("loop_count", 1))
-            # Count 기반 루프일 때 Variable Name은 선택사항이 될 수 있음 (단순 반복용)
-            if self.loop_variable_name_input: self.loop_variable_name_input.setText(data.get("loop_variable_name", "")) 
+            if self.count_loop_variable_name_input: self.count_loop_variable_name_input.setText(data.get("loop_variable_name", ""))
+        else: # Default or old format (try to infer)
+            if data.get("loop_count") is not None:
+                 if self.fixed_count_radio: self.fixed_count_radio.setChecked(True)
+                 if self.loop_count_spinbox: self.loop_count_spinbox.setValue(data.get("loop_count",1))
+                 if self.count_loop_variable_name_input: self.count_loop_variable_name_input.setText(data.get("loop_variable_name", ""))
+            elif data.get("start_value") is not None: # Assume NumericRange if start_value exists
+                 if self.value_sweep_radio: self.value_sweep_radio.setChecked(True)
+                 if self.sweep_loop_variable_name_input: self.sweep_loop_variable_name_input.setText(data.get("loop_variable_name", ""))
+                 if self.start_value_input: self.start_value_input.setText(str(data.get("start_value", "")))
+                 if self.stop_value_input: self.stop_value_input.setText(str(data.get("stop_value", "")))
+                 if self.step_value_input: self.step_value_input.setText(str(data.get("step_value", "")))
+            else: # Fallback if type cannot be determined
+                 if self.value_sweep_radio: self.value_sweep_radio.setChecked(True)
 
 
     def get_loop_parameters(self) -> Optional[LoopActionItem]:
         item_id = self.existing_data.get("item_id") if self.existing_data else f"loop_{datetime.now().timestamp()}"
-        display_name = self.loop_display_name_input.text().strip() if self.loop_display_name_input else ""
+        display_name_text = self.loop_display_name_input.text().strip() if self.loop_display_name_input else ""
 
-        is_sweep = self.value_sweep_radio.isChecked() if self.value_sweep_radio else False
+        is_sweep_range = self.value_sweep_radio.isChecked() if self.value_sweep_radio else False
+        is_sweep_list = self.value_list_radio.isChecked() if self.value_list_radio else False
         is_count = self.fixed_count_radio.isChecked() if self.fixed_count_radio else False
 
         params: Dict[str, Any] = {
             "item_id": item_id,
-            "action_type": "Loop", # Literal["Loop"]
-            "display_name": display_name,
-            "looped_actions": self.existing_data.get("looped_actions", []) if self.existing_data else [] # 내부 액션은 유지
+            "action_type": "Loop",
+            "display_name": display_name_text, # Keep user's display name if provided
+            "looped_actions": self.existing_data.get("looped_actions", []) if self.existing_data else [],
+            # Initialize all sweep/count params to None
+            "sweep_type": None,
+            "loop_variable_name": None,
+            "start_value": None, "stop_value": None, "step_value": None,
+            "value_list": None, "loop_count": None
         }
 
-        if is_sweep:
-            var_name = self.loop_variable_name_input.text().strip() if self.loop_variable_name_input else ""
+        auto_generated_display_name = ""
+
+        if is_sweep_range:
+            params["sweep_type"] = "NumericRange"
+            var_name = self.sweep_loop_variable_name_input.text().strip() if self.sweep_loop_variable_name_input else ""
             start_str = self.start_value_input.text().strip() if self.start_value_input else ""
             stop_str = self.stop_value_input.text().strip() if self.stop_value_input else ""
             step_str = self.step_value_input.text().strip() if self.step_value_input else ""
 
             if not all([var_name, start_str, stop_str, step_str]):
-                QMessageBox.warning(self, "Input Error", "For Value Sweep, all fields (Variable Name, Start, Stop, Step) must be filled.")
+                QMessageBox.warning(self, "Input Error", "For Numeric Range Sweep, all fields (Variable Name, Start, Stop, Step) must be filled.")
                 return None
             try:
                 params["loop_variable_name"] = var_name
-                params["start_value"] = float(start_str)
-                params["stop_value"] = float(stop_str)
-                params["step_value"] = float(step_str)
-                if params["step_value"] == 0:
-                    QMessageBox.warning(self, "Input Error", "Step value cannot be zero for Value Sweep.")
+                s_val, st_val, sp_val = float(start_str), float(stop_str), float(step_str)
+                params["start_value"], params["stop_value"], params["step_value"] = s_val, st_val, sp_val
+                if sp_val == 0:
+                    QMessageBox.warning(self, "Input Error", "Step value cannot be zero for Numeric Range Sweep.")
                     return None
-                # 추가적인 범위 검증 (start < stop if step > 0 등)
-                if (params["step_value"] > 0 and params["start_value"] > params["stop_value"]) or \
-                   (params["step_value"] < 0 and params["start_value"] < params["stop_value"]):
-                    QMessageBox.warning(self, "Input Error", "Loop range and step direction mismatch.")
+                if (sp_val > 0 and s_val > st_val) or (sp_val < 0 and s_val < st_val):
+                    QMessageBox.warning(self, "Input Error", "Loop range and step direction mismatch for Numeric Range.")
+                    return None
+                auto_generated_display_name = f"Loop: {var_name} from {s_val} to {st_val} step {sp_val}"
+            except ValueError:
+                QMessageBox.warning(self, "Input Error", "Start, Stop, and Step values must be valid numbers for Numeric Range.")
+                return None
+        
+        elif is_sweep_list:
+            params["sweep_type"] = "ValueList"
+            var_name = self.list_loop_variable_name_input.text().strip() if self.list_loop_variable_name_input else ""
+            list_str = self.value_list_input.text().strip() if self.value_list_input else ""
+            if not var_name or not list_str:
+                QMessageBox.warning(self, "Input Error", "For List of Values Sweep, Variable Name and Value List must be filled.")
+                return None
+            
+            try:
+                # Attempt to parse as numbers first, then fallback to strings
+                parsed_list = []
+                raw_values = [v.strip() for v in list_str.split(',') if v.strip()]
+                if not raw_values:
+                    QMessageBox.warning(self, "Input Error", "Value List cannot be empty.")
                     return None
 
-            except ValueError:
-                QMessageBox.warning(self, "Input Error", "Start, Stop, and Step values must be valid numbers.")
+                for val_str in raw_values:
+                    try:
+                        parsed_list.append(float(val_str)) # Try float
+                    except ValueError:
+                        try:
+                            parsed_list.append(int(val_str)) # Try int
+                        except ValueError:
+                             parsed_list.append(val_str) # Fallback to string
+
+                params["loop_variable_name"] = var_name
+                params["value_list"] = parsed_list
+                auto_generated_display_name = f"Loop: {var_name} over list ({len(parsed_list)} values)"
+            except Exception as e: # Broad catch for parsing issues
+                QMessageBox.warning(self, "Input Error", f"Error parsing Value List: {e}")
                 return None
-            params["loop_count"] = None # 스윕 루프에서는 loop_count 사용 안 함
-        
+
         elif is_count:
+            params["sweep_type"] = "FixedCount"
             count = self.loop_count_spinbox.value() if self.loop_count_spinbox else 1
             params["loop_count"] = count
-            # 횟수 기반 루프에서도 변수명은 가질 수 있음 (예: 반복 카운터로 사용)
-            params["loop_variable_name"] = self.loop_variable_name_input.text().strip() if self.loop_variable_name_input and self.loop_variable_name_input.text().strip() else None
-            params["start_value"] = None
-            params["stop_value"] = None
-            params["step_value"] = None
+            var_name = self.count_loop_variable_name_input.text().strip() if self.count_loop_variable_name_input and self.count_loop_variable_name_input.text().strip() else None
+            params["loop_variable_name"] = var_name
+            var_part = f" ({var_name})" if var_name else ""
+            auto_generated_display_name = f"Loop: {count} iterations{var_part}"
         else:
-            QMessageBox.warning(self, "Input Error", "Please select a loop type (Value Sweep or Fixed Count).")
+            QMessageBox.warning(self, "Input Error", "Please select a loop type.")
             return None
         
-        if not display_name: # 표시 이름 자동 생성 (선택적)
-            if is_sweep and params.get("loop_variable_name"):
-                params["display_name"] = f"Loop: {params['loop_variable_name']} from {params['start_value']} to {params['stop_value']} step {params['step_value']}"
-            elif is_count:
-                var_part = f" ({params['loop_variable_name']})" if params.get("loop_variable_name") else ""
-                params["display_name"] = f"Loop: {params['loop_count']} iterations{var_part}"
-            else:
-                params["display_name"] = "Loop (Parameters Undefined)"
+        if not display_name_text and auto_generated_display_name:
+            params["display_name"] = auto_generated_display_name
+        elif not display_name_text and not auto_generated_display_name: # Should not happen if one type is selected
+            params["display_name"] = "Loop (Parameters Invalid)"
 
-        # LoopActionItem 타입으로 캐스팅하여 반환 (mypy 등 타입 검사기 만족용)
+
         return cast(LoopActionItem, params)
 
 
