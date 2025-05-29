@@ -1,6 +1,6 @@
 {
-  "name": "col_measure",
-  "saved_at": "2025-05-27T16:18:19.359379",
+  "name": "test_export_example",
+  "saved_at": "2025-05-28T11:50:22.139140",
   "sequence_items": [
     {
       "action_type": "I2C_W_ADDR",
@@ -109,11 +109,30 @@
           }
         },
         {
-          "action_type": "MM_MEAS_V",
-          "display_name": "MM_MEAS_V: VAR=Meas_voltage",
+          "action_type": "I2C_R_NAME",
+          "display_name": "I2C_R_NAME: NAME=GMA_GRN_POL0_TAPCON05; VAR=test2",
+          "item_id": "action_1748400593.408968",
+          "parameters": {
+            "NAME": "GMA_GRN_POL0_TAPCON05",
+            "VAR": "test2"
+          }
+        },
+        {
+          "action_type": "I2C_R_NAME",
+          "display_name": "I2C_R_NAME: NAME=TEMPERATURE; VAR=temp",
           "item_id": "action_1748318670.776503",
           "parameters": {
-            "VAR": "Meas_voltage"
+            "NAME": "TEMPERATURE",
+            "VAR": "temp"
+          }
+        },
+        {
+          "action_type": "I2C_R_NAME",
+          "display_name": "I2C_R_NAME: NAME=GMA_BLU_POL0_TAPCON06; VAR=test1",
+          "item_id": "action_1748400583.768816",
+          "parameters": {
+            "NAME": "GMA_BLU_POL0_TAPCON06",
+            "VAR": "test1"
           }
         }
       ],

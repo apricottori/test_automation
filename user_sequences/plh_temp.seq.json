@@ -1,6 +1,6 @@
 {
   "name": "plh_temp",
-  "saved_at": "2025-05-27T16:18:28.176850",
+  "saved_at": "2025-05-27T16:56:19.487312",
   "sequence_items": [
     {
       "action_type": "I2C_W_ADDR",
@@ -109,11 +109,12 @@
           }
         },
         {
-          "action_type": "MM_MEAS_V",
-          "display_name": "MM_MEAS_V: VAR=Meas_voltage",
+          "action_type": "I2C_R_NAME",
+          "display_name": "I2C_R_NAME: NAME=TEMPERATURE; VAR=temp",
           "item_id": "action_1748318670.776503",
           "parameters": {
-            "VAR": "Meas_voltage"
+            "NAME": "TEMPERATURE",
+            "VAR": "temp"
           }
         }
       ],

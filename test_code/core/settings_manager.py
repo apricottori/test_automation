@@ -71,21 +71,19 @@ class SettingsManager:
     def _determine_config_path(self) -> str:
         """
         설정 파일의 기본 저장 경로를 결정합니다.
-        1. 사용자 문서 폴더 내 앱별 폴더
-        2. 애플리케이션 실행 파일과 같은 위치 (test_code 폴더 내) - 개발 시 주로 사용
-        3. 현재 작업 디렉토리 (최후의 수단)
+        1. 현재 작업 디렉토리 (최우선 - 가장 먼저 시도)
+        2. 애플리케이션 실행 파일과 같은 위치 (test_code 폴더 내)
+        3. 사용자 문서 폴더 내 앱별 폴더 (마지막 옵션)
         """
-        # 옵션 1: 사용자 문서 폴더 내 앱별 폴더
-        try:
-            docs_path = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
-            if docs_path:
-                app_name_for_dirs = getattr(constants, 'APP_NAME_FOR_DIRS', 'TestAutomationApp')
-                app_data_path = os.path.join(docs_path, app_name_for_dirs)
-                os.makedirs(app_data_path, exist_ok=True) # 폴더가 없으면 생성
-                return os.path.join(app_data_path, self.config_file_name)
-        except Exception as e:
-            print(f"INFO_SM: Could not determine documents path for config: {e}. Trying next option.")
-
+        # 옵션 1: 현재 작업 디렉토리 (최우선)
+        current_dir = os.getcwd()
+        current_dir_config_path = os.path.join(current_dir, self.config_file_name)
+        print(f"INFO_SM: Using current working directory for config: {current_dir_config_path}")
+        return current_dir_config_path
+        
+        # 아래 코드는 현재 작업 디렉토리 방식이 실패할 경우를 위한 예비 코드로 남겨둡니다.
+        # 실제로는 위의 return문으로 인해 실행되지 않습니다.
+        
         # 옵션 2: 애플리케이션 실행 파일과 같은 위치 (또는 개발 시 test_code 폴더 내)
         try:
             if getattr(sys, 'frozen', False): # PyInstaller 등으로 번들된 경우
@@ -98,7 +96,18 @@ class SettingsManager:
         except Exception as e:
             print(f"INFO_SM: Could not determine application path for config: {e}. Using current working directory.")
 
-        # 옵션 3: 최후의 수단으로 현재 작업 디렉토리
+        # 옵션 3: 사용자 문서 폴더 내 앱별 폴더
+        try:
+            docs_path = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+            if docs_path:
+                app_name_for_dirs = getattr(constants, 'APP_NAME_FOR_DIRS', 'TestAutomationApp')
+                app_data_path = os.path.join(docs_path, app_name_for_dirs)
+                os.makedirs(app_data_path, exist_ok=True) # 폴더가 없으면 생성
+                return os.path.join(app_data_path, self.config_file_name)
+        except Exception as e:
+            print(f"INFO_SM: Could not determine documents path for config: {e}. Using current working directory.")
+
+        # 최후의 수단으로 현재 작업 디렉토리
         return os.path.join(os.getcwd(), self.config_file_name)
 
 

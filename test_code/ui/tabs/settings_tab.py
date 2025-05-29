@@ -302,7 +302,7 @@ class SettingsTab(QWidget):
             
             # 설정 변경 시그널 발생
             self.settings_changed_signal.emit(self.current_settings)
-            QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, constants.MSG_SETTINGS_SAVED)
+            print(f"INFO_SettingsTab: Settings saved. Emmitting settings_changed_signal.")
 
             # 하드웨어 재초기화가 필요한지 확인
             if self._settings_require_hardware_reinit(old_settings_copy, self.current_settings):
@@ -316,6 +316,7 @@ class SettingsTab(QWidget):
         else:
             # 저장 실패 시 메시지 표시
             QMessageBox.warning(self, constants.MSG_TITLE_ERROR, constants.MSG_SETTINGS_SAVE_FAILED)
+            print(f"ERROR_SettingsTab: Failed to save settings via settings_manager.")
 
     def update_evb_status(self, is_connected: bool, message: str = "") -> None:
         """EVB 연결 상태를 UI에 업데이트합니다."""

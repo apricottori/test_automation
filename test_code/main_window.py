@@ -20,7 +20,7 @@ from ui.tabs.settings_tab import SettingsTab
 from ui.tabs.reg_viewer_tab import RegisterViewerTab
 from ui.tabs.results_viewer_tab import ResultsViewerTab
 from ui.tabs.sequence_controller_tab import SequenceControllerTab
-from core.excel_exporter import ExcelExporter
+# from core.excel_exporter import ExcelExporter # No longer directly used here
 
 import pandas as pd
 
@@ -312,7 +312,7 @@ class RegMapWindow(QMainWindow):
             self.chamber = None
         print("DEBUG: Hardware instances cleared.")
 
-    def _init_i2c_device(self):
+    def _init_i2c_device(self) -> str: # Return error string
         """I2C 장치를 설정값에 따라 초기화합니다."""
         chip_id_str_to_use = ""
         # SettingsTab UI의 현재 Chip ID 값을 우선적으로 사용
@@ -327,80 +327,88 @@ class RegMapWindow(QMainWindow):
             if chip_id_str_to_use:
                 print(f"DEBUG_MW: Using Chip ID from saved current_settings for _init_i2c_device: '{chip_id_str_to_use}'")
 
+        connection_error_message = ""
         if chip_id_str_to_use:
-            self.i2c_device = I2CDevice(chip_id_str=chip_id_str_to_use) # 새 인스턴스 생성
-            if self.i2c_device and self.i2c_device.is_opened:
-                print(f"DEBUG_MW: I2C device initialized and opened successfully with ID: {chip_id_str_to_use}")
-                # change_port는 필요시 호출. 여기서는 EVB 연결 확인이 주 목적.
-                # if hasattr(self.i2c_device, 'change_port'):
-                #     if not self.i2c_device.change_port(0):
-                #          print("Warning: I2C 포트 변경(0) 실패.")
-            elif self.i2c_device and not self.i2c_device.is_opened:
-                QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id_str_to_use}) 연결 실패. EVB 상태를 확인하세요.")
-                self.i2c_device = None # 연결 실패 시 명확히 None으로 설정
-            elif not self.i2c_device: # I2CDevice 생성자에서 문제가 발생하여 None이 반환된 경우 (드문 경우)
-                 QMessageBox.warning(self, constants.MSG_TITLE_ERROR, f"I2C 장치(ID: {chip_id_str_to_use}) 초기화 중 객체 생성 실패.")
-                 self.i2c_device = None # 초기화 실패 시 명확히 None으로 설정
+            self.i2c_device = I2CDevice(chip_id_str=chip_id_str_to_use) 
+            if not (self.i2c_device and self.i2c_device.is_opened):
+                connection_error_message = f"I2C 장치(ID: {chip_id_str_to_use}) 연결 실패. EVB 상태를 확인하세요."
+                self.i2c_device = None 
         else:
             print("Info_MW: Chip ID가 설정되지 않아 I2C 장치를 초기화하지 않습니다.")
-            self.i2c_device = None # Chip ID 없으면 명확히 None으로 설정
-            # 사용자에게 Chip ID가 없음을 알릴 수 있습니다.
-            # QMessageBox.information(self, "알림", "Chip ID가 설정되지 않았습니다. Settings 탭에서 설정해주세요.")
+            self.i2c_device = None
+        return connection_error_message
 
-    def _init_multimeter(self):
+    def _init_multimeter(self) -> str: # Return error string
         """멀티미터를 설정값에 따라 초기화합니다."""
-        # 사용자 제공 코드의 로직 유지 (키 이름 'multimeter_serial' 사용)
-        if self.current_settings.get('multimeter_use'): # 키 직접 사용
+        error_msg = ""
+        if self.current_settings.get('multimeter_use'): 
             serial_num = self.current_settings.get('multimeter_serial')
             if serial_num:
-                self.multimeter = Multimeter(serial_number_str=serial_num) # serial_number_str 사용
+                self.multimeter = Multimeter(serial_number_str=serial_num) 
                 if not self.multimeter.connect():
-                    QMessageBox.warning(self, constants.MSG_TITLE_ERROR,
-                                        constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Multimeter", serial_number=serial_num))
+                    error_msg = constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Multimeter", serial_number=serial_num)
                     self.multimeter = None
             else:
                 self.current_settings['multimeter_use'] = False
-                print("Warning: Multimeter 시리얼 번호가 없어 사용할 수 없습니다. 설정에서 비활성화합니다.")
+                error_msg = "Multimeter 사용이 체크되었으나 시리얼 번호가 없어 비활성화합니다."
+                print(f"Warning_MW: {error_msg}")
         else:
             self.multimeter = None
+        return error_msg
 
-    def _init_sourcemeter(self):
+    def _init_sourcemeter(self) -> str: # Return error string
         """소스미터를 설정값에 따라 초기화합니다."""
-        # 사용자 제공 코드의 로직 유지 (키 이름 'sourcemeter_serial' 사용)
-        if self.current_settings.get('sourcemeter_use'): # 키 직접 사용
+        error_msg = ""
+        if self.current_settings.get('sourcemeter_use'): 
             serial_num = self.current_settings.get('sourcemeter_serial')
             if serial_num:
-                self.sourcemeter = Sourcemeter(serial_number_str=serial_num) # serial_number_str 사용
+                self.sourcemeter = Sourcemeter(serial_number_str=serial_num) 
                 if not self.sourcemeter.connect():
-                     QMessageBox.warning(self, constants.MSG_TITLE_ERROR,
-                                        constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Sourcemeter", serial_number=serial_num))
+                     error_msg = constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Sourcemeter", serial_number=serial_num)
                      self.sourcemeter = None
             else:
                 self.current_settings['sourcemeter_use'] = False
-                print("Warning: Sourcemeter 시리얼 번호가 없어 사용할 수 없습니다. 설정에서 비활성화합니다.")
+                error_msg = "Sourcemeter 사용이 체크되었으나 시리얼 번호가 없어 비활성화합니다."
+                print(f"Warning_MW: {error_msg}")
         else:
             self.sourcemeter = None
+        return error_msg
 
-    def _init_chamber(self):
+    def _init_chamber(self) -> str: # Return error string
         """챔버를 설정값에 따라 초기화합니다."""
-        # 사용자 제공 코드의 로직 유지 (키 이름 'chamber_serial' 사용)
-        if self.current_settings.get('chamber_use'): # 키 직접 사용
+        error_msg = ""
+        if self.current_settings.get('chamber_use'): 
             serial_num = self.current_settings.get('chamber_serial')
-            self.chamber = Chamber(serial_number_str=serial_num if serial_num else None) # serial_number_str 사용
-            if not self.chamber.connect():
-                 QMessageBox.warning(self, constants.MSG_TITLE_ERROR,
-                                    constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Chamber", serial_number=serial_num if serial_num else "N/A"))
+            # Chamber는 시리얼 번호가 없어도 None으로 초기화 시도 가능 (raonpy의 SU241 동작 방식에 따라)
+            self.chamber = Chamber(serial_number_str=serial_num if serial_num else None) 
+            if not self.chamber.connect(): # connect()가 실패하면 (시리얼 필요했거나, 다른 이유로)
+                 error_msg = constants.MSG_DEVICE_CONNECTION_FAILED.format(device_name="Chamber", serial_number=serial_num if serial_num else "N/A")
+                 # self.chamber = None # Chamber 인스턴스는 유지하되, is_connected가 False일 것임.
         else:
             self.chamber = None
+        return error_msg
 
-    def _initialize_hardware_from_settings(self): # 사용자 제공 코드에는 인자 없음
-        """설정값을 기반으로 하드웨어 장치들을 (재)초기화합니다."""
+    def _initialize_hardware_from_settings(self): 
+        """설정값을 기반으로 하드웨어 장치들을 (재)초기화하고, 오류 발생 시 통합 메시지 표시."""
         self._clear_hardware_instances()
+        
+        error_messages = []
 
-        self._init_i2c_device()
-        self._init_multimeter()
-        self._init_sourcemeter()
-        self._init_chamber()
+        i2c_error = self._init_i2c_device()
+        if i2c_error: error_messages.append(i2c_error)
+
+        mm_error = self._init_multimeter()
+        if mm_error: error_messages.append(mm_error)
+
+        sm_error = self._init_sourcemeter()
+        if sm_error: error_messages.append(sm_error)
+
+        ch_error = self._init_chamber()
+        if ch_error: error_messages.append(ch_error)
+
+        if error_messages:
+            QMessageBox.warning(self, "Hardware Initialization Issues",
+                                "Following hardware issues occurred:\n\n" + "\n".join(error_messages))
 
         if self.tab_sequence_controller_widget:
             if hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
@@ -501,11 +509,12 @@ class RegMapWindow(QMainWindow):
             self.tabs.addTab(self.tab_settings_widget, constants.TAB_SETTINGS_TITLE)
         
         # Register Viewer Tab
-        self.tab_reg_viewer_widget = RegisterViewerTab(parent=self) # 사용자 제공 코드: register_map_instance 나중에 전달
+        self.tab_reg_viewer_widget = RegisterViewerTab(parent=self) 
         if self.tab_reg_viewer_widget:
             self.tabs.addTab(self.tab_reg_viewer_widget, constants.TAB_REG_VIEWER_TITLE)
-            if self.tabs.indexOf(self.tab_reg_viewer_widget) != -1:
-                self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False) 
+            # Always enable Register Viewer Tab
+            reg_viewer_idx = self.tabs.indexOf(self.tab_reg_viewer_widget)
+            if reg_viewer_idx != -1: self.tabs.setTabEnabled(reg_viewer_idx, True)
 
         # Sequence Controller Tab
         try:
@@ -534,8 +543,9 @@ class RegMapWindow(QMainWindow):
             self.tab_sequence_controller_widget.new_measurement_signal.connect(self._handle_new_measurement_from_sequence) # 사용자 제공 코드의 슬롯명
             self.tab_sequence_controller_widget.sequence_status_changed_signal.connect(self._handle_sequence_status_changed) # 사용자 제공 코드의 슬롯명
             self.tabs.addTab(self.tab_sequence_controller_widget, constants.TAB_SEQUENCE_CONTROLLER_TITLE)
-            if self.tabs.indexOf(self.tab_sequence_controller_widget) != -1:
-                self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
+            # Always enable Sequence Controller Tab
+            seq_ctrl_idx = self.tabs.indexOf(self.tab_sequence_controller_widget)
+            if seq_ctrl_idx != -1: self.tabs.setTabEnabled(seq_ctrl_idx, True)
         else:
             print("ERROR: SequenceControllerTab widget is None after instantiation attempt. Tab will not be added.")
             placeholder_tab = QWidget()
@@ -561,15 +571,30 @@ class RegMapWindow(QMainWindow):
             elif hasattr(self.tab_results_viewer_widget, 'set_results_manager'): # 설정 메소드가 있다면 호출
                 self.tab_results_viewer_widget.set_results_manager(self.results_manager)
 
+            # Always enable Results Viewer Tab
+            results_viewer_idx = self.tabs.indexOf(self.tab_results_viewer_widget)
+            if results_viewer_idx != -1: self.tabs.setTabEnabled(results_viewer_idx, True)
 
             excel_export_config = self.current_settings.get(constants.SETTINGS_EXCEL_SHEETS_CONFIG_KEY, [])
             if hasattr(self.tab_results_viewer_widget, 'set_excel_export_config'):
                 self.tab_results_viewer_widget.set_excel_export_config(excel_export_config)
             
             self.tab_results_viewer_widget.clear_results_requested_signal.connect(self._handle_clear_results)
-            self.tab_results_viewer_widget.export_excel_requested_signal.connect(self._handle_export_excel)
             self.tabs.addTab(self.tab_results_viewer_widget, constants.TAB_RESULTS_TITLE)
             self._populate_results_viewer_ui()
+
+        # Ensure main functional tabs (Reg Viewer, Sequence, Results) are enabled regardless of JSON loaded state initially.
+        # Settings tab is always enabled by default.
+        if self.tabs:
+            if self.tab_reg_viewer_widget: 
+                idx = self.tabs.indexOf(self.tab_reg_viewer_widget)
+                if idx != -1: self.tabs.setTabEnabled(idx, True)
+            if self.tab_sequence_controller_widget:
+                idx = self.tabs.indexOf(self.tab_sequence_controller_widget)
+                if idx != -1: self.tabs.setTabEnabled(idx, True)
+            if self.tab_results_viewer_widget: 
+                idx = self.tabs.indexOf(self.tab_results_viewer_widget)
+                if idx != -1: self.tabs.setTabEnabled(idx, True)
 
         if self.main_layout and self.tabs:
             self.main_layout.addWidget(self.tabs)
@@ -656,7 +681,7 @@ class RegMapWindow(QMainWindow):
     def _handle_settings_changed(self, new_settings_from_tab: dict):
         self.current_settings.update(new_settings_from_tab)
         if self.settings_manager and self.settings_manager.save_settings(self.current_settings): # settings_manager None 체크
-            QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, constants.MSG_SETTINGS_SAVED)
+            print(f"INFO_MainWindow: Settings changed and saved via SettingsTab.")
             self._initialize_hardware_from_settings()
             
             if self.tab_settings_widget:
@@ -698,8 +723,10 @@ class RegMapWindow(QMainWindow):
                     self.tab_results_viewer_widget.set_excel_export_config(excel_conf)
         elif self.settings_manager: # save_settings가 False를 반환한 경우
             QMessageBox.warning(self, constants.MSG_TITLE_ERROR, constants.MSG_SETTINGS_SAVE_FAILED)
+            print(f"ERROR_MainWindow: Failed to save settings from _handle_settings_changed.")
         else: # settings_manager가 None인 경우
              QMessageBox.critical(self, "Error", "SettingsManager is not initialized. Cannot save settings.")
+             print(f"CRITICAL_MainWindow: SettingsManager is None in _handle_settings_changed.")
 
 
     @pyqtSlot()
@@ -713,25 +740,6 @@ class RegMapWindow(QMainWindow):
                hasattr(self.tab_sequence_controller_widget, 'execution_log_textedit') and \
                self.tab_sequence_controller_widget.execution_log_textedit is not None:
                 self.tab_sequence_controller_widget.execution_log_textedit.append("--- 모든 측정 결과가 초기화되었습니다. ---")
-
-    @pyqtSlot(str, list) # sheet_definitions 타입이 List[ExcelSheetConfig] 여야 함
-    def _handle_export_excel(self, file_path: str, sheet_definitions: List[Dict[str,Any]]):
-        if not self.results_manager:
-            QMessageBox.critical(self, "Error", "ResultsManager is not initialized.")
-            return
-
-        results_df = self.results_manager.get_results_dataframe()
-        if results_df.empty:
-            QMessageBox.information(self, "No Data", "내보낼 결과 데이터가 없습니다.")
-            return
-
-        exporter = ExcelExporter(results_df)
-        # sheet_definitions가 List[ExcelSheetConfig] 타입이라고 가정.
-        # ExcelExportSettingsDialog.get_final_sheet_configs()가 이 타입을 반환해야 함.
-        if exporter.export_to_excel(file_path, sheet_definitions): 
-            QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, f"결과가 '{file_path}'에 저장되었습니다.")
-        else:
-            QMessageBox.warning(self, constants.MSG_TITLE_ERROR, "Excel 파일 저장에 실패했습니다. 로그를 확인하세요.")
 
     @pyqtSlot(str, object, str, dict) # sample_number 타입 변경 (object -> str) 사용자 제공 코드 기준
     def _handle_new_measurement_from_sequence(self, variable_name: str, value: object, sample_number: str, conditions: Dict[str, Any]):
@@ -811,7 +819,7 @@ class RegMapWindow(QMainWindow):
                         self.tab_reg_viewer_widget.update_register_map(self.register_map)
                     if hasattr(self.tab_reg_viewer_widget, 'populate_table'):
                         self.tab_reg_viewer_widget.populate_table(self.register_map) # Pass self.register_map
-                if self.tabs and self.tab_reg_viewer_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), True)
+                # if self.tabs and self.tab_reg_viewer_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), True) # Already enabled
 
                 if self.completer_model: # completer_model None 체크
                     field_ids = self.register_map.get_all_field_ids()
@@ -820,7 +828,7 @@ class RegMapWindow(QMainWindow):
                 if self.tab_sequence_controller_widget:
                     if hasattr(self.tab_sequence_controller_widget, 'update_register_map'):
                         self.tab_sequence_controller_widget.update_register_map(self.register_map)
-                if self.tabs and self.tab_sequence_controller_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), True)
+                # if self.tabs and self.tab_sequence_controller_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), True) # Already enabled
 
                 if not auto_loaded:
                     QMessageBox.information(self, constants.MSG_TITLE_SUCCESS,
@@ -830,9 +838,10 @@ class RegMapWindow(QMainWindow):
                 if self.current_file_label:
                     self.current_file_label.setText(f"로드 실패: {os.path.basename(file_path)}")
                 
-                if self.tabs:
-                    if self.tab_reg_viewer_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False)
-                    if self.tab_sequence_controller_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
+                # These tabs should remain enabled as per new requirement
+                # if self.tabs:
+                #     if self.tab_reg_viewer_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False)
+                #     if self.tab_sequence_controller_widget: self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
                 if self.completer_model: self.completer_model.setStringList([])
                 
                 error_details = "\n".join(errors) if errors else "알 수 없는 파싱 오류입니다."
@@ -845,11 +854,12 @@ class RegMapWindow(QMainWindow):
         except Exception as e:
             if hasattr(self, 'current_file_label') and self.current_file_label:
                  self.current_file_label.setText(f"로드 중 예외 발생: {os.path.basename(file_path)}")
-            if hasattr(self, 'tabs') and self.tabs:
-                if hasattr(self, 'tab_reg_viewer_widget') and self.tab_reg_viewer_widget and self.tabs.indexOf(self.tab_reg_viewer_widget) != -1:
-                     self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False)
-                if hasattr(self, 'tab_sequence_controller_widget') and self.tab_sequence_controller_widget and self.tabs.indexOf(self.tab_sequence_controller_widget) != -1:
-                     self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
+            # These tabs should remain enabled
+            # if hasattr(self, 'tabs') and self.tabs:
+            #     if hasattr(self, 'tab_reg_viewer_widget') and self.tab_reg_viewer_widget and self.tabs.indexOf(self.tab_reg_viewer_widget) != -1:
+            #          self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_reg_viewer_widget), False)
+            #     if hasattr(self, 'tab_sequence_controller_widget') and self.tab_sequence_controller_widget and self.tabs.indexOf(self.tab_sequence_controller_widget) != -1:
+            #          self.tabs.setTabEnabled(self.tabs.indexOf(self.tab_sequence_controller_widget), False)
             if hasattr(self, 'completer_model') and self.completer_model:
                 self.completer_model.setStringList([])
             
@@ -908,31 +918,15 @@ class RegMapWindow(QMainWindow):
             any_instrument_on = dmm_on or smu_on or chamber_on
             reg_map_loaded = bool(self.register_map and self.register_map.logical_fields_map) # Check if regmap is loaded and has fields
             
-            # Main Sequence Tab is enabled if any instrument is on AND a register map is loaded.
-            # Or, if you want to allow sequence editing even without a regmap for some cases (e.g. delay only sequences),
-            # you might change this logic, e.g., main_seq_tab_should_be_enabled = any_instrument_on or reg_map_loaded (if you want it enabled if either is true)
-            # For now, let's stick to: it must have an instrument AND a regmap to be useful for most instrument actions.
-            # However, the user wants the tab active if ANY instrument is active, regardless of regmap for now.
-            main_seq_tab_should_be_enabled = any_instrument_on
-            if not reg_map_loaded and any_instrument_on:
-                 print("DEBUG_MW: An instrument is enabled, but no register map is loaded. Sequence tab will be enabled, but I2C actions might fail.")
-            # If no instrument is selected, the main sequence tab should be disabled if it was only enabled due to instruments.
-            # If it was enabled due to a loaded regmap (for I2C actions), it should remain enabled if regmap is still loaded.
-            # This simplifies to: enable if any instrument OR regmap is loaded.
-            # Let's refine: Enable if (any instrument is on) OR (regmap is loaded and NO instruments are on, allowing I2C/Delay only sequences)
-            # For now, let's try: Enable if any instrument is on. If no instruments are on, its state depends on whether a regmap is loaded (for I2C/Delay).
-
-            if any_instrument_on:
-                main_seq_tab_should_be_enabled = True
-            elif reg_map_loaded: # No instruments, but regmap is loaded (allow I2C/Delay)
-                main_seq_tab_should_be_enabled = True 
-            else: # No instruments and no regmap
-                main_seq_tab_should_be_enabled = False
+            # Main Sequence Tab is now always enabled, specific sub-tabs in ActionInputPanel are controlled.
+            main_seq_tab_should_be_enabled = True 
 
             seq_tab_idx = self.tabs.indexOf(self.tab_sequence_controller_widget)
             if seq_tab_idx != -1:
-                print(f"DEBUG_MW: Main Sequence Tab current enabled: {self.tabs.isTabEnabled(seq_tab_idx)}, calculated should be: {main_seq_tab_should_be_enabled} (any_instr_on: {any_instrument_on}, regmap_loaded: {reg_map_loaded})")
-                self.tabs.setTabEnabled(seq_tab_idx, main_seq_tab_should_be_enabled)
+                # print(f"DEBUG_MW: Main Sequence Tab current enabled: {self.tabs.isTabEnabled(seq_tab_idx)}, calculated should be: {main_seq_tab_should_be_enabled} (any_instr_on: {any_instrument_on}, regmap_loaded: {reg_map_loaded})")
+                if not self.tabs.isTabEnabled(seq_tab_idx):
+                     self.tabs.setTabEnabled(seq_tab_idx, True)
+                     print(f"DEBUG_MW: Ensured SequenceControllerTab is enabled.")
 
         # Propagate to SequenceControllerTab to manage its internal (ActionInputPanel) tabs
         if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'set_instrument_tab_enabled'):

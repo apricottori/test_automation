@@ -835,51 +835,60 @@ class ActionInputPanel(QWidget):
 
     def update_settings(self, new_settings: Dict[str, Any]):
         """외부(메인 윈도우)로부터 받은 새 설정으로 내부 상태 및 UI를 업데이트합니다.
-           NOTE: Instrument sub-tab enablement is now handled by enable_instrument_sub_tab().
         """
         self.current_settings = new_settings if new_settings is not None else {}
-        # Tab enablement logic is removed from here and moved to enable_instrument_sub_tab
-        print(f"DEBUG_AIP_UpdateSettings: Settings updated. DMM_use: {self.current_settings.get(constants.SETTINGS_MULTIMETER_USE_KEY)}, SMU_use: {self.current_settings.get(constants.SETTINGS_SOURCEMETER_USE_KEY)}, Chamber_use: {self.current_settings.get(constants.SETTINGS_CHAMBER_USE_KEY)}")
-        self._update_active_sub_tab_fields() # Still needed to refresh stacked widget if current tab changes
+        print(f"DEBUG_AIP_UpdateSettings: Settings updated in ActionInputPanel. DMM_use: {self.current_settings.get(constants.SETTINGS_MULTIMETER_USE_KEY)}, SMU_use: {self.current_settings.get(constants.SETTINGS_SOURCEMETER_USE_KEY)}, Chamber_use: {self.current_settings.get(constants.SETTINGS_CHAMBER_USE_KEY)}")
+        
+        # The actual tab enabling/disabling is handled by enable_instrument_sub_tab, 
+        # which is called from SequenceControllerTab, which in turn gets it from MainWindow.
+        # However, _update_active_sub_tab_fields might be needed if the current action combo selection
+        # becomes invalid due to a tab becoming disabled.
+        self._update_active_sub_tab_fields() 
 
     def enable_instrument_sub_tab(self, instrument_type: str, enabled: bool):
         """Enables or disables a specific instrument sub-tab (DMM, SMU, Chamber)."""
         print(f"DEBUG_AIP: enable_instrument_sub_tab called for '{instrument_type}', enabled: {enabled}")
         target_tab_widget: Optional[QWidget] = None
-        tab_key_for_log = "Unknown"
+        tab_title_for_lookup: Optional[str] = None
 
         if instrument_type == "DMM":
-            target_tab_widget = self.dmm_tab_widget
-            tab_key_for_log = "DMM"
+            # target_tab_widget = self.dmm_tab_widget # Direct widget reference might be more robust
+            tab_title_for_lookup = constants.SEQ_SUB_TAB_DMM_TITLE
         elif instrument_type == "SMU":
-            target_tab_widget = self.smu_tab_widget
-            tab_key_for_log = "SMU"
-        elif instrument_type == "CHAMBER": # Matches signal emission
-            target_tab_widget = self.temp_tab_widget
-            tab_key_for_log = "Chamber"
+            # target_tab_widget = self.smu_tab_widget
+            tab_title_for_lookup = constants.SEQ_SUB_TAB_SMU_TITLE
+        elif instrument_type == "CHAMBER": 
+            # target_tab_widget = self.temp_tab_widget
+            tab_title_for_lookup = constants.SEQ_SUB_TAB_TEMP_TITLE
         else:
             print(f"ERROR_AIP: Unknown instrument_type '{instrument_type}' in enable_instrument_sub_tab.")
             return
 
-        if self.action_group_tabs and target_tab_widget is not None:
-            tab_idx = self.action_group_tabs.indexOf(target_tab_widget)
+        if self.action_group_tabs and tab_title_for_lookup:
+            tab_idx = -1
+            for i in range(self.action_group_tabs.count()):
+                if self.action_group_tabs.tabText(i) == tab_title_for_lookup:
+                    tab_idx = i
+                    break
+            
             if tab_idx != -1:
                 current_visual_state = self.action_group_tabs.isTabEnabled(tab_idx)
-                print(f"DEBUG_AIP: {tab_key_for_log} sub-tab (idx {tab_idx}) current visual enabled: {current_visual_state}, attempting to set to: {enabled}")
+                print(f"DEBUG_AIP: {instrument_type} sub-tab (idx {tab_idx}, title '{tab_title_for_lookup}') current visual enabled: {current_visual_state}, attempting to set to: {enabled}")
                 self.action_group_tabs.setTabEnabled(tab_idx, enabled)
-                QApplication.processEvents() # Try to force UI update
+                QApplication.processEvents() 
                 final_visual_state = self.action_group_tabs.isTabEnabled(tab_idx)
-                print(f"VERIFY_AIP_{tab_key_for_log}_TAB_NEW: {tab_key_for_log} tab index {tab_idx} is NOW actually enabled: {final_visual_state} (desired: {enabled})")
+                print(f"VERIFY_AIP_{instrument_type}_TAB: {instrument_type} tab index {tab_idx} is NOW actually enabled: {final_visual_state} (desired: {enabled})")
 
                 if not enabled and self.action_group_tabs.widget(tab_idx) == self.action_group_tabs.currentWidget():
-                    self.action_group_tabs.setCurrentIndex(0) # Switch to I2C tab
-                    print(f"DEBUG_AIP: {tab_key_for_log} tab was current and disabled, switched to I2C tab.")
+                    # Switch to the I2C tab (index 0) if the currently active tab is being disabled
+                    self.action_group_tabs.setCurrentIndex(0) 
+                    print(f"DEBUG_AIP: {instrument_type} tab was current and disabled, switched to I2C tab (index 0).")
             else:
-                print(f"ERROR_AIP: {tab_key_for_log} tab widget not found in action_group_tabs for enable/disable.")
+                print(f"ERROR_AIP: {instrument_type} sub-tab with title '{tab_title_for_lookup}' not found in action_group_tabs for enable/disable.")
         elif not self.action_group_tabs:
             print("ERROR_AIP: self.action_group_tabs is None in enable_instrument_sub_tab.")
-        elif target_tab_widget is None:
-             print(f"ERROR_AIP: target_tab_widget for {instrument_type} is None in enable_instrument_sub_tab.")
+        elif not tab_title_for_lookup:
+             print(f"ERROR_AIP: tab_title_for_lookup is None for {instrument_type} in enable_instrument_sub_tab.")
 
     def update_register_map(self, new_register_map: Optional[RegisterMap]):
         """외부(메인 윈도우)로부터 받은 새 레지스터 맵으로 내부 상태를 업데이트합니다."""

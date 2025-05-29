@@ -107,11 +107,15 @@ class ExcelSheetConfig(TypedDict):
     
     index_fields: List[str]               # 행으로 사용할 필드 리스트
     column_fields: List[str]              # 열로 사용할 필드 리스트
-    value_field: str                      # 값으로 사용할 필드
+    # value_field: str                      # 값으로 사용할 필드 - 제거됨
     
-    index_filters: Dict[str, List[Any]]   # 인덱스 필드별 필터 값 목록
-    column_filters: Dict[str, List[Any]]  # 컬럼 필드별 필터 값 목록
-    global_filters: Dict[str, Any]        # 전역 필터 조건
-    
+    include_columns: Optional[List[str]]  # 이 시트에 명시적으로 포함할 컬럼 리스트 (필터링 후, 피벗 전 적용)
+
+    # index_filters: Dict[str, List[Any]]   # 인덱스 필드별 필터 값 목록 - 제거 또는 value_filters로 통합 고려
+    # column_filters: Dict[str, List[Any]]  # 컬럼 필드별 필터 값 목록 - 제거 또는 value_filters로 통합 고려
+    global_filters: Optional[Dict[str, Any]] # 전역 필터 조건 - Optional로 변경
+    value_filters: Optional[Dict[str, List[str]]] # 특정 필드의 특정 문자열 값만 포함/제외하기 위한 필터 (UI 단순화)
+
     transpose: bool                       # 행/열 전환 여부
-    aggfunc: str                          # 집계 함수 (mean, max, min, first, last 등) 
+    # aggfunc: str                          # 집계 함수 (mean, max, min, first, last 등) - 제거됨
+    

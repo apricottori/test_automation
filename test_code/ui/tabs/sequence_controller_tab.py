@@ -521,27 +521,6 @@ class SequenceControllerTab(QWidget):
         self._add_new_loop_block_action(target_parent_item=None, insert_after_item=None)
         return 
 
-    def _is_item_in_loop(self, item_index: int) -> bool:
-        if self.sequence_list_widget is None: return False
-        
-        if self.sequence_list_widget.topLevelItemCount() > 0:
-            reply = QMessageBox.question(self, "시퀀스 로드", 
-                                         "현재 편집 중인 시퀀스가 있습니다. 저장하지 않은 변경사항은 사라집니다.\n"
-                                         "새 시퀀스를 로드하고 현재 목록을 지우시겠습니까?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) 
-            if reply == QMessageBox.No:
-                return
-        
-        self.sequence_list_widget.clear()
-        self._add_items_to_tree(items)
-        
-        if self.execution_log_textedit: 
-            self.execution_log_textedit.clear()
-            log_prefix = "새"
-            if items and isinstance(items[0], dict):
-                 log_prefix = items[0].get("display_name", items[0].get("action_type", "알 수 없는"))
-            self.execution_log_textedit.append(f"--- '{log_prefix}{'...' if items else ''}' 시퀀스가 로드되었습니다. ---")
-
     def _add_items_to_tree(self, sequence_items: List[SequenceItem], parent_tree_item: Optional[QTreeWidgetItem] = None):
         """ SequenceItem 리스트를 QTreeWidget에 아이템으로 추가 (재귀적) """
         if not self.sequence_list_widget: return

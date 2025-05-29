@@ -13,6 +13,7 @@ class ResultsManager:
         self.results_data: List[Dict[str, Any]] = []
         # 기본 컬럼 순서 정의 (Timestamp 제거)
         self.base_columns = ["Variable Name", "Value", constants.EXCEL_COL_SAMPLE_NO]
+        self._available_columns_cache: Optional[List[str]] = None
 
 
     def add_measurement(self,
@@ -46,11 +47,13 @@ class ResultsManager:
                 record[cond_key] = cond_value
         
         self.results_data.append(record)
+        self._available_columns_cache = None # 새로운 키가 추가될 수 있으므로 캐시 무효화
         print(f"ResultsManager: Measurement added - {variable_name}={value}, Sample={sample_number}, Conds={conditions}")
 
     def clear_results(self):
         """모든 저장된 측정 결과를 초기화합니다."""
         self.results_data = []
+        self._available_columns_cache = None # 결과가 비워졌으므로 캐시 무효화
         print("ResultsManager: All results cleared.")
 
     def get_results_dataframe(self) -> pd.DataFrame:
@@ -100,12 +103,19 @@ class ResultsManager:
         """
         현재 저장된 모든 결과 데이터에서 내보내기 가능한 모든 고유 컬럼명 리스트를 반환합니다.
         순서는 기본 컬럼, 샘플 번호, 그 외 조건 컬럼 순으로 정렬될 수 있습니다.
+        결과는 캐시될 수 있습니다.
 
         Returns:
             List[str]: 사용 가능한 컬럼명 리스트.
         """
+        if self._available_columns_cache is not None:
+            print("ResultsManager: Returning cached available export columns.")
+            return self._available_columns_cache
+
         if not self.results_data:
-            return self.base_columns[:] # 데이터가 없어도 기본 컬럼은 반환
+            self._available_columns_cache = self.base_columns[:]
+            print("ResultsManager: No data, returning base columns for export (cached).")
+            return self._available_columns_cache
 
         # get_results_dataframe()과 유사하게 모든 유니크한 키를 수집
         all_keys_ordered: List[str] = []
@@ -135,6 +145,8 @@ class ResultsManager:
         
         all_keys_ordered.extend(sorted(list(set(other_keys)))) # set으로 중복 제거 후 정렬하여 추가
 
+        self._available_columns_cache = all_keys_ordered
+        print(f"ResultsManager: Calculated and cached available export columns: {len(all_keys_ordered)} columns.")
         return all_keys_ordered
 
 
