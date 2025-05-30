@@ -1,11 +1,12 @@
 # ui/widgets/action_input_panel.py
 import sys
+import re # 정규표현식 모듈 임포트 추가
 from typing import List, Tuple, Dict, Any, Optional
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
     QStackedWidget, QGridLayout, QDoubleSpinBox, QCompleter, QTabWidget,
-    QMessageBox, QApplication, QStyle
+    QMessageBox, QApplication, QStyle, QCheckBox # QCheckBox 추가
 )
 from PyQt5.QtCore import Qt, QRegularExpression, QStringListModel, pyqtSignal
 from PyQt5.QtGui import QRegularExpressionValidator, QFont, QDoubleValidator
@@ -59,8 +60,9 @@ class ActionInputPanel(QWidget):
         self.completer_model = completer_model
         self.current_settings = current_settings if current_settings is not None else {}
         self.register_map = register_map_instance
+        self.active_loop_variables_model = QStringListModel(self) # 루프 변수 모델
 
-        # UI 멤버 변수 초기화 (타입 힌트 포함)
+        # UI 멤버 변수 초기화 (루프 변수 관련 UI 요소 추가)
         self.action_group_tabs: Optional[QTabWidget] = None
 
         # I2C/Delay 탭 UI 요소
@@ -69,51 +71,104 @@ class ActionInputPanel(QWidget):
         self.i2c_params_stack: Optional[QStackedWidget] = None
         self.i2c_write_name_target_input: Optional[QLineEdit] = None
         self.i2c_write_name_value_input: Optional[QLineEdit] = None
+        self.i2c_write_name_value_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.i2c_write_name_value_loop_var_combo: Optional[QComboBox] = None
         self.i2c_write_addr_target_input: Optional[QLineEdit] = None
         self.i2c_write_addr_value_input: Optional[QLineEdit] = None
+        self.i2c_write_addr_value_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.i2c_write_addr_value_loop_var_combo: Optional[QComboBox] = None
         self.i2c_read_name_target_input: Optional[QLineEdit] = None
         self.i2c_read_name_var_name_input: Optional[QLineEdit] = None
         self.i2c_read_addr_target_input: Optional[QLineEdit] = None
         self.i2c_read_addr_var_name_input: Optional[QLineEdit] = None
         self.delay_seconds_input: Optional[QDoubleSpinBox] = None
+        self.delay_seconds_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.delay_seconds_loop_var_combo: Optional[QComboBox] = None
 
-        # DMM 탭 UI 요소
+
+        # DMM 탭 UI 요소 (Value를 받는 부분이 명확하지 않아 일단 보류)
         self.dmm_tab_widget: Optional[QWidget] = None
         self.dmm_action_combo: Optional[QComboBox] = None
         self.dmm_params_stack: Optional[QStackedWidget] = None
         self.dmm_measure_var_name_input: Optional[QLineEdit] = None
-        self.dmm_terminal_combo: Optional[QComboBox] = None # DMM 터미널 설정용
+        self.dmm_terminal_combo: Optional[QComboBox] = None
 
         # SMU 탭 UI 요소
         self.smu_tab_widget: Optional[QWidget] = None
         self.smu_action_combo: Optional[QComboBox] = None
         self.smu_params_stack: Optional[QStackedWidget] = None
-        self.smu_set_value_label: Optional[QLabel] = None # 전압/전류 설정 시 라벨 텍스트 변경용
+        self.smu_set_value_label: Optional[QLabel] = None
         self.smu_set_value_input: Optional[QLineEdit] = None
-        self.smu_set_terminal_combo: Optional[QComboBox] = None # SMU 값 설정 시 터미널 선택
+        self.smu_set_value_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.smu_set_value_loop_var_combo: Optional[QComboBox] = None
+        self.smu_set_terminal_combo: Optional[QComboBox] = None
         self.smu_measure_var_name_input: Optional[QLineEdit] = None
-        self.smu_measure_terminal_combo: Optional[QComboBox] = None # SMU 측정 시 터미널 선택
+        self.smu_measure_terminal_combo: Optional[QComboBox] = None
         self.smu_output_state_combo: Optional[QComboBox] = None
-        self.smu_terminal_combo: Optional[QComboBox] = None # SMU 터미널 '설정' 액션용
+        self.smu_terminal_combo: Optional[QComboBox] = None
         self.smu_protection_current_input: Optional[QLineEdit] = None
+        self.smu_protection_current_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.smu_protection_current_loop_var_combo: Optional[QComboBox] = None
+        self.smu_vsource_terminal_label: Optional[QLabel] = None
+        self.smu_vsource_terminal_combo: Optional[QComboBox] = None
+
 
         # Chamber 탭 UI 요소
         self.temp_tab_widget: Optional[QWidget] = None
         self.temp_action_combo: Optional[QComboBox] = None
         self.temp_params_stack: Optional[QStackedWidget] = None
         self.chamber_set_temp_input: Optional[QLineEdit] = None
+        self.chamber_set_temp_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.chamber_set_temp_loop_var_combo: Optional[QComboBox] = None
         self.chamber_check_target_temp_input: Optional[QLineEdit] = None
+        self.chamber_check_target_temp_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.chamber_check_target_temp_loop_var_combo: Optional[QComboBox] = None
         self.chamber_check_tolerance_input: Optional[QLineEdit] = None
+        self.chamber_check_tolerance_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.chamber_check_tolerance_loop_var_combo: Optional[QComboBox] = None
         self.chamber_check_timeout_input: Optional[QLineEdit] = None
+        self.chamber_check_timeout_use_loop_var_checkbox: Optional[QCheckBox] = None
+        self.chamber_check_timeout_loop_var_combo: Optional[QComboBox] = None
 
-        # 유효성 검사기
+
         self._hex_validator = QRegularExpressionValidator(QRegularExpression("[0-9A-Fa-fXx]*"))
         self._double_validator = QDoubleValidator()
         self._double_validator.setNotation(QDoubleValidator.StandardNotation)
-        self._double_validator.setDecimals(6) # 소수점 6자리까지 허용
+        self._double_validator.setDecimals(6)
 
         self._setup_ui()
-        self.update_settings(self.current_settings) # 초기 설정값으로 UI 업데이트
+        self.update_settings(self.current_settings)
+
+    def _create_loop_var_widgets(self, base_name: str, parent_layout: QGridLayout, row: int, existing_line_edit: Optional[QLineEdit]) -> Tuple[QCheckBox, QComboBox]: # existing_line_edit을 Optional로 변경
+        """Helper to create and layout checkbox and combobox for loop variable usage."""
+        checkbox = QCheckBox("Use Loop Var")
+        combobox = QComboBox()
+        combobox.setModel(self.active_loop_variables_model)
+        combobox.setEnabled(False)
+
+        parent_layout.addWidget(checkbox, row, 2)
+        parent_layout.addWidget(combobox, row, 3)
+        
+        # Connect signals
+        # existing_line_edit이 None일 수 있으므로, 이를 _toggle_loop_var_ui에 전달
+        checkbox.toggled.connect(lambda checked, le=existing_line_edit, cb=combobox: self._toggle_loop_var_ui(checked, le, cb))
+        return checkbox, combobox
+
+    def _toggle_loop_var_ui(self, checked: bool, line_edit: Optional[QLineEdit], combobox: Optional[QComboBox], spinbox: Optional[QDoubleSpinBox] = None):
+        """Toggles enabled state of line_edit/spinbox and combobox based on checkbox."""
+        if line_edit: line_edit.setEnabled(not checked)
+        if spinbox: spinbox.setEnabled(not checked)
+        if combobox: combobox.setEnabled(checked)
+        
+        if checked:
+            if line_edit and line_edit.text(): 
+                pass
+            if spinbox and spinbox.value() != spinbox.minimum():
+                pass
+        else: 
+            if line_edit: line_edit.setPlaceholderText(getattr(line_edit, "_original_placeholder", "")) 
+            if spinbox: 
+                spinbox.setSpecialValueText("")
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -194,6 +249,8 @@ class ActionInputPanel(QWidget):
         self.i2c_write_name_value_input.setValidator(self._hex_validator)
         self.i2c_write_name_value_input.editingFinished.connect(lambda le=self.i2c_write_name_value_input: self._normalize_hex_field(le, add_prefix=True))
         layout_i2c_write_name.addWidget(self.i2c_write_name_value_input, 1, 1)
+        self.i2c_write_name_value_use_loop_var_checkbox, self.i2c_write_name_value_loop_var_combo = \
+            self._create_loop_var_widgets("i2c_write_name_value", layout_i2c_write_name, 1, self.i2c_write_name_value_input)
         self.i2c_params_stack.addWidget(page_i2c_write_name)
 
         # I2C Write (Address) 페이지
@@ -212,6 +269,8 @@ class ActionInputPanel(QWidget):
         self.i2c_write_addr_value_input.setValidator(self._hex_validator)
         self.i2c_write_addr_value_input.editingFinished.connect(lambda le=self.i2c_write_addr_value_input, nc=2: self._normalize_hex_field(le, nc, add_prefix=True)) # 값은 2자리(1바이트)로 정규화
         layout_i2c_write_addr.addWidget(self.i2c_write_addr_value_input, 1, 1)
+        self.i2c_write_addr_value_use_loop_var_checkbox, self.i2c_write_addr_value_loop_var_combo = \
+            self._create_loop_var_widgets("i2c_write_addr_value", layout_i2c_write_addr, 1, self.i2c_write_addr_value_input)
         self.i2c_params_stack.addWidget(page_i2c_write_addr)
 
         # I2C Read (Name) 페이지
@@ -254,6 +313,13 @@ class ActionInputPanel(QWidget):
         self.delay_seconds_input.setMinimum(0.001); self.delay_seconds_input.setMaximum(3600.0 * 24) # 최대 24시간
         self.delay_seconds_input.setDecimals(3); self.delay_seconds_input.setValue(0.01) # 기본값 10ms
         layout_delay.addWidget(self.delay_seconds_input, 0, 1)
+        self.delay_seconds_use_loop_var_checkbox, self.delay_seconds_loop_var_combo = \
+            self._create_loop_var_widgets("delay_seconds", layout_delay, 0, existing_line_edit=None) # QDoubleSpinBox, special handling below
+        # Special handling for QDoubleSpinBox
+        self.delay_seconds_use_loop_var_checkbox.toggled.connect(
+            lambda checked, sb=self.delay_seconds_input, cb=self.delay_seconds_loop_var_combo: 
+            self._toggle_loop_var_ui(checked, None, cb, sb)
+        )
         self.i2c_params_stack.addWidget(page_delay)
 
         # Placeholder 페이지 (아무 액션도 선택되지 않았을 때)
@@ -311,7 +377,7 @@ class ActionInputPanel(QWidget):
         layout = QVBoxLayout(tab); layout.setContentsMargins(8,12,8,8); layout.setSpacing(10)
         layout.addWidget(QLabel("<b>SMU Action:</b>"))
         self.smu_action_combo = QComboBox()
-        self.smu_action_combo.addItems(constants.SMU_ACTIONS_LIST) # 수정된 상수명 사용
+        self.smu_action_combo.addItems(constants.SMU_ACTIONS_LIST)
         self.smu_action_combo.currentIndexChanged.connect(self._update_active_sub_tab_fields)
         layout.addWidget(self.smu_action_combo)
         self.smu_params_stack = QStackedWidget()
@@ -319,6 +385,9 @@ class ActionInputPanel(QWidget):
         layout.addWidget(self.smu_params_stack)
         layout.addStretch()
         self.action_group_tabs.addTab(tab, constants.SEQ_SUB_TAB_SMU_TITLE)
+        # --- 위젯 None 방지: 생성 직후 assert ---
+        assert self.smu_action_combo is not None, "smu_action_combo is None after creation"
+        assert self.smu_params_stack is not None, "smu_params_stack is None after creation"
 
     def _create_smu_params_widgets(self):
         """SMU 액션별 파라미터 입력 위젯들을 생성합니다."""
@@ -332,11 +401,9 @@ class ActionInputPanel(QWidget):
         self.smu_set_value_input.setValidator(self._double_validator)
         self.smu_set_value_input.setPlaceholderText(constants.SEQ_INPUT_NUMERIC_VALUE_PLACEHOLDER)
         layout_smu_set.addWidget(self.smu_set_value_input, 0, 1)
-        layout_smu_set.addWidget(QLabel(constants.SEQ_INPUT_TERMINAL_LABEL), 1, 0)
-        self.smu_set_terminal_combo = QComboBox()
-        self.smu_set_terminal_combo.addItems([constants.TERMINAL_FRONT, constants.TERMINAL_REAR])
-        layout_smu_set.addWidget(self.smu_set_terminal_combo, 1, 1)
-        self.smu_params_stack.addWidget(page_smu_set)
+        self.smu_set_value_use_loop_var_checkbox, self.smu_set_value_loop_var_combo = \
+            self._create_loop_var_widgets("smu_set_value", layout_smu_set, 0, self.smu_set_value_input)
+        self.smu_params_stack.addWidget(page_smu_set)  # 0: SET_VALUE
 
         # SMU Measure (Voltage/Current) 페이지
         page_smu_measure = QWidget()
@@ -350,17 +417,21 @@ class ActionInputPanel(QWidget):
         self.smu_measure_terminal_combo = QComboBox()
         self.smu_measure_terminal_combo.addItems([constants.TERMINAL_FRONT, constants.TERMINAL_REAR])
         layout_smu_measure.addWidget(self.smu_measure_terminal_combo, 1, 1)
-        self.smu_params_stack.addWidget(page_smu_measure)
+        self.smu_params_stack.addWidget(page_smu_measure)  # 1: MEASURE
 
-        # SMU Enable Output 페이지
-        page_smu_enable_output = QWidget()
-        layout_smu_enable_output = QGridLayout(page_smu_enable_output)
-        layout_smu_enable_output.setVerticalSpacing(12); layout_smu_enable_output.setHorizontalSpacing(8)
-        layout_smu_enable_output.addWidget(QLabel(constants.SEQ_INPUT_OUTPUT_STATE_LABEL), 0, 0)
+        # SMU Output Control 페이지
+        page_smu_output_control = QWidget()
+        layout_smu_output_control = QGridLayout(page_smu_output_control)
+        layout_smu_output_control.setVerticalSpacing(12); layout_smu_output_control.setHorizontalSpacing(8)
+        layout_smu_output_control.addWidget(QLabel(constants.SEQ_INPUT_OUTPUT_STATE_LABEL), 0, 0)
         self.smu_output_state_combo = QComboBox()
-        self.smu_output_state_combo.addItems([constants.BOOL_TRUE, constants.BOOL_FALSE]) # 수정된 상수명 사용
-        layout_smu_enable_output.addWidget(self.smu_output_state_combo, 0, 1)
-        self.smu_params_stack.addWidget(page_smu_enable_output)
+        self.smu_output_state_combo.addItems([
+            constants.SMU_OUTPUT_STATE_ENABLE, 
+            constants.SMU_OUTPUT_STATE_DISABLE,
+            constants.SMU_OUTPUT_STATE_VSOURCE  # constants에서 정의된 값 사용
+        ])
+        layout_smu_output_control.addWidget(self.smu_output_state_combo, 0, 1)
+        self.smu_params_stack.addWidget(page_smu_output_control)  # 2: ENABLE_OUTPUT
 
         # SMU Set Terminal 페이지
         page_smu_set_terminal = QWidget()
@@ -370,7 +441,7 @@ class ActionInputPanel(QWidget):
         self.smu_terminal_combo = QComboBox()
         self.smu_terminal_combo.addItems([constants.TERMINAL_FRONT, constants.TERMINAL_REAR])
         layout_smu_set_terminal.addWidget(self.smu_terminal_combo, 0, 1)
-        self.smu_params_stack.addWidget(page_smu_set_terminal)
+        self.smu_params_stack.addWidget(page_smu_set_terminal)  # 3: SET_TERMINAL
 
         # SMU Set Protection Current 페이지
         page_smu_set_protection_i = QWidget()
@@ -381,13 +452,15 @@ class ActionInputPanel(QWidget):
         self.smu_protection_current_input.setValidator(self._double_validator)
         self.smu_protection_current_input.setPlaceholderText("e.g., 0.1 (for 100mA)")
         layout_smu_set_protection_i.addWidget(self.smu_protection_current_input, 0, 1)
-        self.smu_params_stack.addWidget(page_smu_set_protection_i)
+        self.smu_protection_current_use_loop_var_checkbox, self.smu_protection_current_loop_var_combo = \
+            self._create_loop_var_widgets("smu_protection_current", layout_smu_set_protection_i, 0, self.smu_protection_current_input)
+        self.smu_params_stack.addWidget(page_smu_set_protection_i)  # 4: SET_PROTECTION_I
 
         # Placeholder 페이지
         page_placeholder_smu = QWidget()
         layout_placeholder_smu = QVBoxLayout(page_placeholder_smu)
         layout_placeholder_smu.addWidget(QLabel("Select an SMU action above."), alignment=Qt.AlignCenter)
-        self.smu_params_stack.addWidget(page_placeholder_smu)
+        self.smu_params_stack.addWidget(page_placeholder_smu)  # 5: PLACEHOLDER
 
     def _create_temp_sub_tab(self):
         """Chamber(온도) 액션 입력을 위한 UI를 생성합니다."""
@@ -410,39 +483,51 @@ class ActionInputPanel(QWidget):
         double_validator_temp.setNotation(QDoubleValidator.StandardNotation)
         double_validator_temp.setDecimals(2) # 소수점 2자리
 
-        # Chamber Set Temperature 페이지
-        page_chamber_set_temp = QWidget()
-        layout_chamber_set_temp = QGridLayout(page_chamber_set_temp)
-        layout_chamber_set_temp.setVerticalSpacing(12); layout_chamber_set_temp.setHorizontalSpacing(8)
-        layout_chamber_set_temp.addWidget(QLabel(constants.SEQ_INPUT_TEMP_LABEL), 0, 0)
-        self.chamber_set_temp_input = QLineEdit()
+        # Set Temp 페이지
+        page_set_temp = QWidget()
+        layout_set_temp = QGridLayout(page_set_temp)
+        layout_set_temp.setVerticalSpacing(12); layout_set_temp.setHorizontalSpacing(8)
+        self.chamber_set_temp_input = QLineEdit() # Moved and ensured assignment
+        self.chamber_set_temp_input.setPlaceholderText("예: 25 (도씨)")
         self.chamber_set_temp_input.setValidator(double_validator_temp)
-        self.chamber_set_temp_input.setPlaceholderText("e.g., 25.0")
-        layout_chamber_set_temp.addWidget(self.chamber_set_temp_input, 0, 1)
-        self.temp_params_stack.addWidget(page_chamber_set_temp)
+        layout_set_temp.addWidget(QLabel(constants.SEQ_INPUT_TEMP_LABEL), 0, 0) # Corrected label usage
+        layout_set_temp.addWidget(self.chamber_set_temp_input, 0, 1)
+        self.chamber_set_temp_use_loop_var_checkbox, self.chamber_set_temp_loop_var_combo = self._create_loop_var_widgets(
+            "CHAMBER_SET_TEMP_VAL", layout_set_temp, 0, self.chamber_set_temp_input) # Ensure correct row and pass input
+        page_set_temp.setLayout(layout_set_temp) # Ensure layout is set on page
+        self.temp_params_stack.addWidget(page_set_temp)
 
-        # Chamber Check Temperature 페이지
-        page_chamber_check_temp = QWidget()
-        layout_chamber_check_temp = QGridLayout(page_chamber_check_temp)
-        layout_chamber_check_temp.setVerticalSpacing(12); layout_chamber_check_temp.setHorizontalSpacing(8)
-        layout_chamber_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TEMP_LABEL), 0, 0) # 목표 온도
-        self.chamber_check_target_temp_input = QLineEdit()
+        # Check Temp 페이지
+        page_check_temp = QWidget()
+        layout_check_temp = QGridLayout(page_check_temp)
+        layout_check_temp.setVerticalSpacing(12); layout_check_temp.setHorizontalSpacing(8)
+        self.chamber_check_target_temp_input = QLineEdit() # Moved and ensured assignment
+        self.chamber_check_target_temp_input.setPlaceholderText("예: 25 (도씨)")
         self.chamber_check_target_temp_input.setValidator(double_validator_temp)
-        self.chamber_check_target_temp_input.setPlaceholderText("e.g., 25.0")
-        layout_chamber_check_temp.addWidget(self.chamber_check_target_temp_input, 0, 1)
-        
-        layout_chamber_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TOLERANCE_LABEL), 1, 0) # 허용 오차
-        self.chamber_check_tolerance_input = QLineEdit()
-        self.chamber_check_tolerance_input.setValidator(QDoubleValidator(0.01, 10.0, 2)) # 0.01 ~ 10.0, 소수점 2자리
-        self.chamber_check_tolerance_input.setPlaceholderText(f"e.g., {constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG}")
-        layout_chamber_check_temp.addWidget(self.chamber_check_tolerance_input, 1, 1)
-        
-        layout_chamber_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TIMEOUT_LABEL), 2, 0) # 시간 초과
-        self.chamber_check_timeout_input = QLineEdit()
-        self.chamber_check_timeout_input.setValidator(QDoubleValidator(1.0, 3600.0 * 3, 1)) # 1초 ~ 3시간, 소수점 1자리
-        self.chamber_check_timeout_input.setPlaceholderText(f"e.g., {constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC}")
-        layout_chamber_check_temp.addWidget(self.chamber_check_timeout_input, 2, 1)
-        self.temp_params_stack.addWidget(page_chamber_check_temp)
+        layout_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TEMP_LABEL), 0, 0) # Corrected label usage
+        layout_check_temp.addWidget(self.chamber_check_target_temp_input, 0, 1)
+        self.chamber_check_target_temp_use_loop_var_checkbox, self.chamber_check_target_temp_loop_var_combo = self._create_loop_var_widgets(
+            "CHAMBER_CHECK_TEMP_VAL", layout_check_temp, 0, self.chamber_check_target_temp_input)
+
+        self.chamber_check_tolerance_input = QLineEdit() # Moved and ensured assignment
+        self.chamber_check_tolerance_input.setPlaceholderText(f"기본값: {constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG}")
+        self.chamber_check_tolerance_input.setValidator(self._double_validator) # General double validator for tolerance
+        layout_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TOLERANCE_LABEL), 1, 0)
+        layout_check_temp.addWidget(self.chamber_check_tolerance_input, 1, 1)
+        # Remove loop variable widgets for tolerance
+        # self.chamber_check_tolerance_use_loop_var_checkbox, self.chamber_check_tolerance_loop_var_combo = self._create_loop_var_widgets(
+        #     "CHAMBER_CHECK_TEMP_TOL", layout_check_temp, 1, self.chamber_check_tolerance_input)
+
+        self.chamber_check_timeout_input = QLineEdit() # Moved and ensured assignment
+        self.chamber_check_timeout_input.setPlaceholderText(f"기본값: {constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC}")
+        self.chamber_check_timeout_input.setValidator(self._double_validator) # General double validator for timeout
+        layout_check_temp.addWidget(QLabel(constants.SEQ_INPUT_TIMEOUT_LABEL), 2, 0)
+        layout_check_temp.addWidget(self.chamber_check_timeout_input, 2, 1)
+        # Remove loop variable widgets for timeout
+        # self.chamber_check_timeout_use_loop_var_checkbox, self.chamber_check_timeout_loop_var_combo = self._create_loop_var_widgets(
+        #     "CHAMBER_CHECK_TEMP_TIMEOUT", layout_check_temp, 2, self.chamber_check_timeout_input)
+        page_check_temp.setLayout(layout_check_temp) # Ensure layout is set on page
+        self.temp_params_stack.addWidget(page_check_temp)
 
         # Placeholder 페이지
         page_placeholder_temp = QWidget()
@@ -451,46 +536,56 @@ class ActionInputPanel(QWidget):
         self.temp_params_stack.addWidget(page_placeholder_temp)
 
     def _update_active_sub_tab_fields(self, index: Optional[int] = None):
-        """현재 선택된 메인 탭 및 하위 액션 콤보박스에 따라 표시될 파라미터 UI를 업데이트합니다."""
+        """
+        현재 활성화된 서브 탭의 입력 필드 상태를 업데이트합니다.
+        (예: 필드명, 단위, 기본값 등)
+        """
         if not self.action_group_tabs: return
         current_tab_index = self.action_group_tabs.currentIndex()
 
-        if current_tab_index == 0: # I2C/Delay 탭
-            if not self.i2c_action_combo or not self.i2c_params_stack: return
-            action_text = self.i2c_action_combo.currentText()
-            # constants.py에서 정의된 액션 문자열 상수 사용
-            if action_text == constants.ACTION_I2C_WRITE_NAME: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.WRITE_NAME)
-            elif action_text == constants.ACTION_I2C_WRITE_ADDR: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.WRITE_ADDR)
-            elif action_text == constants.ACTION_I2C_READ_NAME: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_NAME)
-            elif action_text == constants.ACTION_I2C_READ_ADDR: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_ADDR)
-            elif action_text == constants.ACTION_DELAY: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.DELAY)
-            else: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.PLACEHOLDER)
-        
-        elif current_tab_index == 1: # DMM 탭
-            if not self.dmm_action_combo or not self.dmm_params_stack: return
-            action_text = self.dmm_action_combo.currentText()
-            if action_text in [constants.ACTION_MM_MEAS_V, constants.ACTION_MM_MEAS_I]: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.MEASURE)
-            elif action_text == constants.ACTION_MM_SET_TERMINAL: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.SET_TERMINAL)
-            else: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.PLACEHOLDER)
+        # I2C/Delay 탭 UI 업데이트
+        if current_tab_index == 0:
+            if self.i2c_action_combo and self.i2c_params_stack:
+                action_text = self.i2c_action_combo.currentText()
+                if action_text == constants.ACTION_I2C_WRITE_NAME: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.WRITE_NAME)
+                elif action_text == constants.ACTION_I2C_WRITE_ADDR: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.WRITE_ADDR)
+                elif action_text == constants.ACTION_I2C_READ_NAME: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_NAME)
+                elif action_text == constants.ACTION_I2C_READ_ADDR: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_ADDR)
+                elif action_text == constants.ACTION_DELAY: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.DELAY)
+                else: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.PLACEHOLDER)
+
+        # DMM 탭 UI 업데이트
+        elif current_tab_index == 1:
+            if self.dmm_action_combo and self.dmm_params_stack:
+                action_text = self.dmm_action_combo.currentText()
+                if action_text in [constants.ACTION_MM_MEAS_V, constants.ACTION_MM_MEAS_I]: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.MEASURE)
+                elif action_text == constants.ACTION_MM_SET_TERMINAL: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.SET_TERMINAL)
+                else: self.dmm_params_stack.setCurrentIndex(self.DMMParamPages.PLACEHOLDER)
             
-        elif current_tab_index == 2: # SMU 탭
-            if not self.smu_action_combo or not self.smu_params_stack or not self.smu_set_value_label: return
+        # SMU 탭 UI 업데이트
+        elif current_tab_index == 2:
+            if not self.smu_action_combo or not self.smu_params_stack: return
             action_text = self.smu_action_combo.currentText()
-            if action_text in [constants.ACTION_SM_SET_V, constants.ACTION_SM_SET_I]:
+            if action_text == constants.ACTION_SM_SET_V or action_text == constants.ACTION_SM_SET_I:
                 self.smu_params_stack.setCurrentIndex(self.SMUParamPages.SET_VALUE)
-                self.smu_set_value_label.setText(f"{'Voltage' if action_text == constants.ACTION_SM_SET_V else 'Current'} (Numeric):")
-            elif action_text in [constants.ACTION_SM_MEAS_V, constants.ACTION_SM_MEAS_I]: self.smu_params_stack.setCurrentIndex(self.SMUParamPages.MEASURE)
-            elif action_text == constants.ACTION_SM_ENABLE_OUTPUT: self.smu_params_stack.setCurrentIndex(self.SMUParamPages.ENABLE_OUTPUT)
-            elif action_text == constants.ACTION_SM_SET_TERMINAL: self.smu_params_stack.setCurrentIndex(self.SMUParamPages.SET_TERMINAL)
-            elif action_text == constants.ACTION_SM_SET_PROTECTION_I: self.smu_params_stack.setCurrentIndex(self.SMUParamPages.SET_PROTECTION_I)
-            else: self.smu_params_stack.setCurrentIndex(self.SMUParamPages.PLACEHOLDER)
-            
-        elif current_tab_index == 3: # Chamber 탭
-            if not self.temp_action_combo or not self.temp_params_stack: return
-            action_text = self.temp_action_combo.currentText()
-            if action_text == constants.ACTION_CHAMBER_SET_TEMP: self.temp_params_stack.setCurrentIndex(self.TempParamPages.SET_TEMP)
-            elif action_text == constants.ACTION_CHAMBER_CHECK_TEMP: self.temp_params_stack.setCurrentIndex(self.TempParamPages.CHECK_TEMP)
-            else: self.temp_params_stack.setCurrentIndex(self.TempParamPages.PLACEHOLDER)
+            elif action_text == constants.ACTION_SM_MEAS_V or action_text == constants.ACTION_SM_MEAS_I:
+                self.smu_params_stack.setCurrentIndex(self.SMUParamPages.MEASURE)
+            elif action_text == constants.ACTION_SM_OUTPUT_CONTROL:
+                self.smu_params_stack.setCurrentIndex(self.SMUParamPages.ENABLE_OUTPUT)
+            elif action_text == constants.ACTION_SM_SET_TERMINAL:
+                self.smu_params_stack.setCurrentIndex(self.SMUParamPages.SET_TERMINAL)
+            elif action_text == constants.ACTION_SM_SET_PROTECTION_I:
+                self.smu_params_stack.setCurrentIndex(self.SMUParamPages.SET_PROTECTION_I)
+            else:
+                self.smu_params_stack.setCurrentIndex(self.SMUParamPages.PLACEHOLDER)
+        
+        # Chamber 탭 UI 업데이트
+        elif current_tab_index == 3:
+            if self.temp_action_combo and self.temp_params_stack:
+                action_text = self.temp_action_combo.currentText()
+                if action_text == constants.ACTION_CHAMBER_SET_TEMP: self.temp_params_stack.setCurrentIndex(self.TempParamPages.SET_TEMP)
+                elif action_text == constants.ACTION_CHAMBER_CHECK_TEMP: self.temp_params_stack.setCurrentIndex(self.TempParamPages.CHECK_TEMP)
+                else: self.temp_params_stack.setCurrentIndex(self.TempParamPages.PLACEHOLDER)
 
     def _is_i2c_ready(self) -> bool:
         """I2C 사용을 위한 준비(Chip ID 설정)가 되었는지 확인하고, 아니면 경고 메시지를 표시합니다."""
@@ -535,7 +630,10 @@ class ActionInputPanel(QWidget):
 
 
     def get_current_action_string_and_prefix(self) -> Optional[Tuple[str, str, Dict[str,str]]]:
-        """현재 UI에서 선택/입력된 액션 정보를 파싱하여 문자열과 파라미터 딕셔너리로 반환합니다."""
+        """
+        현재 입력된 액션의 문자열, 시퀀스 프리픽스, 파라미터 dict를 반환합니다.
+        (액션 추가/수정 시 호출)
+        """
         print("DEBUG_AIP: get_current_action_string_and_prefix called")
         if not self.action_group_tabs:
             print("DEBUG_AIP: self.action_group_tabs is None, returning None")
@@ -576,36 +674,63 @@ class ActionInputPanel(QWidget):
                 if not self.register_map or not self.register_map.logical_fields_map:
                     QMessageBox.warning(self, constants.MSG_TITLE_ERROR, constants.MSG_NO_REGMAP_LOADED); return None
                 
-                item_str_prefix = constants.SEQ_PREFIX_I2C_WRITE_NAME # Enum 값 사용
+                item_str_prefix = constants.SEQ_PREFIX_I2C_WRITE_NAME
                 name = self.i2c_write_name_target_input.text().strip()
-                value_hex_raw = self.i2c_write_name_value_input.text().strip()
                 
-                value_hex_normalized = normalize_hex_input(value_hex_raw, add_prefix=True)
-
-                if not value_hex_normalized and value_hex_raw: 
-                    QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_HEX_VALUE.format(value=value_hex_raw)); return None
-                if not name or not value_hex_normalized : # 이름 또는 정규화된 값이 비었으면
+                value_str = ""
+                if self.i2c_write_name_value_use_loop_var_checkbox and self.i2c_write_name_value_use_loop_var_checkbox.isChecked():
+                    cb = self.i2c_write_name_value_loop_var_combo
+                    print(f"DEBUG_LOOP_VAR: I2C_WRITE_NAME - Checkbox checked. ComboBox text: '{cb.currentText()}', index: {cb.currentIndex()}, model count: {cb.model().rowCount()}")
+                    selected_loop_var_text = cb.currentText()
+                    selected_loop_var_index = cb.currentIndex()
+                    if selected_loop_var_text and selected_loop_var_index > 0: 
+                        value_str = f"{{{selected_loop_var_text}}}"
+                    else:
+                        QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "A loop variable must be selected for I2C Write Name Value when 'Use Loop Var' is checked."); return None
+                else:
+                    value_hex_raw = self.i2c_write_name_value_input.text().strip()
+                    value_hex_normalized = normalize_hex_input(value_hex_raw, add_prefix=True)
+                    if not value_hex_normalized and value_hex_raw:
+                        QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_HEX_VALUE.format(value=value_hex_raw)); return None
+                    value_str = value_hex_normalized
+                
+                if not name or not value_str:
                     QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INPUT_EMPTY_GENERIC); return None
-                if name not in self.register_map.logical_fields_map:
+                if self.register_map and name not in self.register_map.logical_fields_map: # register_map None 체크 추가
                     QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_FIELD_ID_NOT_FOUND.format(field_id=name)); return None
                 
-                value_hex = value_hex_normalized
-                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_TARGET_NAME}={name}", f"{constants.SEQ_PARAM_KEY_VALUE}={value_hex}"])
+                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_TARGET_NAME}={name}", f"{constants.SEQ_PARAM_KEY_VALUE}={value_str}"])
                 params_dict_for_data[constants.SEQ_PARAM_KEY_TARGET_NAME] = name
-                params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = value_hex
+                params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = value_str
             
             # ... (ACTION_I2C_WRITE_ADDR, READ_NAME, READ_ADDR, DELAY에 대한 로직도 유사하게 constants 사용) ...
             elif action_text == constants.ACTION_I2C_WRITE_ADDR:
                 item_str_prefix = constants.SEQ_PREFIX_I2C_WRITE_ADDR
                 addr_hex_raw = self.i2c_write_addr_target_input.text().strip()
-                value_hex_raw = self.i2c_write_addr_value_input.text().strip()
                 addr_hex_normalized = normalize_hex_input(addr_hex_raw, 4, add_prefix=True)
-                value_hex_normalized = normalize_hex_input(value_hex_raw, 2, add_prefix=True)
                 if not addr_hex_normalized and addr_hex_raw: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, f"잘못된 주소 형식: {addr_hex_raw}"); return None
-                if not value_hex_normalized and value_hex_raw: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_HEX_VALUE.format(value=value_hex_raw)); return None
-                if not addr_hex_normalized or not value_hex_normalized: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INPUT_EMPTY_GENERIC); return None
-                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_ADDRESS}={addr_hex_normalized}", f"{constants.SEQ_PARAM_KEY_VALUE}={value_hex_normalized}"])
-                params_dict_for_data[constants.SEQ_PARAM_KEY_ADDRESS] = addr_hex_normalized; params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = value_hex_normalized
+                if not addr_hex_normalized : QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INPUT_EMPTY_GENERIC); return None
+
+                value_str = ""
+                if self.i2c_write_addr_value_use_loop_var_checkbox and self.i2c_write_addr_value_use_loop_var_checkbox.isChecked():
+                    cb = self.i2c_write_addr_value_loop_var_combo
+                    print(f"DEBUG_LOOP_VAR: I2C_WRITE_ADDR - Checkbox checked. ComboBox text: '{cb.currentText()}', index: {cb.currentIndex()}, model count: {cb.model().rowCount()}")
+                    selected_loop_var_text = cb.currentText()
+                    selected_loop_var_index = cb.currentIndex()
+                    if selected_loop_var_text and selected_loop_var_index > 0:
+                        value_str = f"{{{selected_loop_var_text}}}"
+                    else:
+                        QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "A loop variable must be selected for I2C Write Address Value when 'Use Loop Var' is checked."); return None
+                else:
+                    value_hex_raw = self.i2c_write_addr_value_input.text().strip()
+                    value_hex_normalized = normalize_hex_input(value_hex_raw, 2, add_prefix=True)
+                    if not value_hex_normalized and value_hex_raw: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_HEX_VALUE.format(value=value_hex_raw)); return None
+                    value_str = value_hex_normalized
+
+                if not value_str: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INPUT_EMPTY_GENERIC); return None
+                
+                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_ADDRESS}={addr_hex_normalized}", f"{constants.SEQ_PARAM_KEY_VALUE}={value_str}"])
+                params_dict_for_data[constants.SEQ_PARAM_KEY_ADDRESS] = addr_hex_normalized; params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = value_str
 
             elif action_text == constants.ACTION_I2C_READ_NAME:
                 if not self.register_map or not self.register_map.logical_fields_map: QMessageBox.warning(self, constants.MSG_TITLE_ERROR, constants.MSG_NO_REGMAP_LOADED); return None
@@ -629,10 +754,23 @@ class ActionInputPanel(QWidget):
             
             elif action_text == constants.ACTION_DELAY:
                 item_str_prefix = constants.SEQ_PREFIX_DELAY
-                delay_val = self.delay_seconds_input.value()
-                if delay_val <= 0: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "지연 시간은 0보다 커야 합니다."); return None
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_SECONDS}={delay_val}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_SECONDS] = str(delay_val)
+                delay_val_str = ""
+                if self.delay_seconds_use_loop_var_checkbox and self.delay_seconds_use_loop_var_checkbox.isChecked():
+                    cb = self.delay_seconds_loop_var_combo
+                    print(f"DEBUG_LOOP_VAR: DELAY - Checkbox checked. ComboBox text: '{cb.currentText()}', index: {cb.currentIndex()}, model count: {cb.model().rowCount()}")
+                    selected_loop_var_text = cb.currentText()
+                    selected_loop_var_index = cb.currentIndex()
+                    if selected_loop_var_text and selected_loop_var_index > 0:
+                        delay_val_str = f"{{{selected_loop_var_text}}}"
+                    else:
+                        QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "A loop variable must be selected for Delay Seconds when 'Use Loop Var' is checked."); return None
+                else:
+                    delay_val = self.delay_seconds_input.value()
+                    if delay_val <= 0: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "지연 시간은 0보다 커야 합니다."); return None
+                    delay_val_str = str(delay_val)
+                
+                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_SECONDS}={delay_val_str}")
+                params_dict_for_data[constants.SEQ_PARAM_KEY_SECONDS] = delay_val_str
             else:
                 QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_ACTION_NOT_SUPPORTED); return None
         
@@ -660,94 +798,121 @@ class ActionInputPanel(QWidget):
         
         # SMU 탭
         elif current_tab_index == 2:
-            if not (self.smu_action_combo and self.smu_params_stack and self.smu_set_value_label and # Reverted check
-                    self.smu_set_value_input and self.smu_set_terminal_combo and 
-                    self.smu_measure_var_name_input and self.smu_measure_terminal_combo and
-                    self.smu_output_state_combo and self.smu_terminal_combo and 
-                    self.smu_protection_current_input):
-                QMessageBox.critical(self, "내부 UI 오류", "SMU 액션 UI 요소 준비 안됨."); return None
             if not self._is_device_enabled(constants.SETTINGS_SOURCEMETER_USE_KEY, "Sourcemeter"): return None
-            
             action_text = self.smu_action_combo.currentText()
-            if action_text == constants.ACTION_SM_SET_V: item_str_prefix = constants.SEQ_PREFIX_SM_SET_V
-            elif action_text == constants.ACTION_SM_SET_I: item_str_prefix = constants.SEQ_PREFIX_SM_SET_I
-            elif action_text == constants.ACTION_SM_MEAS_V: item_str_prefix = constants.SEQ_PREFIX_SM_MEAS_V
-            elif action_text == constants.ACTION_SM_MEAS_I: item_str_prefix = constants.SEQ_PREFIX_SM_MEAS_I
-            elif action_text == constants.ACTION_SM_ENABLE_OUTPUT: item_str_prefix = constants.SEQ_PREFIX_SM_ENABLE_OUTPUT
-            elif action_text == constants.ACTION_SM_SET_TERMINAL: item_str_prefix = constants.SEQ_PREFIX_SM_SET_TERMINAL
-            elif action_text == constants.ACTION_SM_SET_PROTECTION_I: item_str_prefix = constants.SEQ_PREFIX_SM_SET_PROTECTION_I
-            else: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_ACTION_NOT_SUPPORTED); return None
+            item_str_prefix = ""
+            params_list_for_str = [] # Ensure this list is used to build the display string
+            params_dict_for_data = {}
 
-            if item_str_prefix in [constants.SEQ_PREFIX_SM_SET_V, constants.SEQ_PREFIX_SM_SET_I]:
-                val_str = self.smu_set_value_input.text().strip()
-                if not val_str: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "값 입력 필요"); return None
-                try: float(val_str)
-                except ValueError: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_NUMERIC_VALUE.format(value=val_str)); return None
-                term_val = self.smu_set_terminal_combo.currentText()
-                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_VALUE}={val_str}", f"{constants.SEQ_PARAM_KEY_TERMINAL}={term_val}"])
-                params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = val_str; params_dict_for_data[constants.SEQ_PARAM_KEY_TERMINAL] = term_val
-            elif item_str_prefix in [constants.SEQ_PREFIX_SM_MEAS_V, constants.SEQ_PREFIX_SM_MEAS_I]:
+            # Helper to add param to both list and dict if value exists
+            def add_smu_param(key_const: str, value: Optional[str], value_for_str: Optional[str] = None):
+                if value is not None and value.strip():
+                    params_dict_for_data[key_const] = value.strip()
+                    # Use value_for_str if provided (e.g. for loop var placeholders), else use actual value
+                    params_list_for_str.append(f"{key_const}={value_for_str if value_for_str is not None else value.strip()}")
+
+            if action_text == constants.ACTION_SM_SET_V:
+                if self.smu_set_value_input is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 전압 입력란이 준비되지 않았습니다."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_SET_V
+                val_str, val_for_display_str = self._get_value_or_loop_var_text(self.smu_set_value_input, self.smu_set_value_use_loop_var_checkbox, self.smu_set_value_loop_var_combo)
+                if not val_str: QMessageBox.warning(self, "값 입력 필요", "전압 값을 입력하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_VALUE, val_str, val_for_display_str)
+
+            elif action_text == constants.ACTION_SM_SET_I:
+                if self.smu_set_value_input is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 전류 입력란이 준비되지 않았습니다."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_SET_I
+                val_str, val_for_display_str = self._get_value_or_loop_var_text(self.smu_set_value_input, self.smu_set_value_use_loop_var_checkbox, self.smu_set_value_loop_var_combo)
+                if not val_str: QMessageBox.warning(self, "값 입력 필요", "전류 값을 입력하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_VALUE, val_str, val_for_display_str)
+
+            elif action_text == constants.ACTION_SM_MEAS_V:
+                if self.smu_measure_var_name_input is None or self.smu_measure_terminal_combo is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 측정 UI 요소 누락."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_MEAS_V
                 var_name = self.smu_measure_var_name_input.text().strip()
-                if not var_name: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "결과 변수명 입력 필요"); return None
-                term_val = self.smu_measure_terminal_combo.currentText()
-                params_list_for_str.extend([f"{constants.SEQ_PARAM_KEY_VARIABLE}={var_name}", f"{constants.SEQ_PARAM_KEY_TERMINAL}={term_val}"])
-                params_dict_for_data[constants.SEQ_PARAM_KEY_VARIABLE] = var_name; params_dict_for_data[constants.SEQ_PARAM_KEY_TERMINAL] = term_val
-            elif item_str_prefix == constants.SEQ_PREFIX_SM_ENABLE_OUTPUT:
-                state_val = self.smu_output_state_combo.currentText() # constants.BOOL_TRUE 또는 BOOL_FALSE
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_STATE}={state_val}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_STATE] = state_val
-            elif item_str_prefix == constants.SEQ_PREFIX_SM_SET_TERMINAL:
-                term_val = self.smu_terminal_combo.currentText()
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_TERMINAL}={term_val}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_TERMINAL] = term_val
-            elif item_str_prefix == constants.SEQ_PREFIX_SM_SET_PROTECTION_I:
-                val_str = self.smu_protection_current_input.text().strip()
-                if not val_str: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "보호 전류 값 입력 필요"); return None
-                try: float(val_str)
-                except ValueError: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_NUMERIC_VALUE.format(value=val_str)); return None
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_CURRENT_LIMIT}={val_str}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_CURRENT_LIMIT] = val_str
+                term = self.smu_measure_terminal_combo.currentText()
+                if not var_name: QMessageBox.warning(self, "값 입력 필요", "결과 변수명을 입력하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_VARIABLE, var_name)
+                add_smu_param(constants.SEQ_PARAM_KEY_TERMINAL, term)
+            
+            elif action_text == constants.ACTION_SM_MEAS_I:
+                if self.smu_measure_var_name_input is None or self.smu_measure_terminal_combo is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 측정 UI 요소 누락."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_MEAS_I
+                var_name = self.smu_measure_var_name_input.text().strip()
+                term = self.smu_measure_terminal_combo.currentText()
+                if not var_name: QMessageBox.warning(self, "값 입력 필요", "결과 변수명을 입력하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_VARIABLE, var_name)
+                add_smu_param(constants.SEQ_PARAM_KEY_TERMINAL, term)
+
+            elif action_text == constants.ACTION_SM_OUTPUT_CONTROL:
+                if self.smu_output_state_combo is None: QMessageBox.critical(self, "내부 UI 오류", "SMU Output Control 콤보박스가 준비되지 않았습니다."); return None
+                selected_state = self.smu_output_state_combo.currentText().strip().upper()
+                if selected_state == constants.SMU_OUTPUT_STATE_VSOURCE:
+                    item_str_prefix = constants.SEQ_PREFIX_SM_CONFIGURE_VSOURCE_AND_ENABLE
+                    # No specific parameters for this one usually, relies on prior Set V
+                else:
+                    item_str_prefix = constants.SEQ_PREFIX_SM_ENABLE_OUTPUT # Changed from SM_OUTPUT_CONTROL to specific enable/disable
+                    state_bool_val = "TRUE" if selected_state == constants.SMU_OUTPUT_STATE_ENABLE else "FALSE"
+                    add_smu_param(constants.SEQ_PARAM_KEY_STATE, state_bool_val)
+            
+            elif action_text == constants.ACTION_SM_SET_TERMINAL:
+                if self.smu_terminal_combo is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 터미널 콤보박스가 준비되지 않았습니다."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_SET_TERMINAL
+                term = self.smu_terminal_combo.currentText().strip()
+                if not term: QMessageBox.warning(self, "값 입력 필요", "터미널을 선택하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_TERMINAL, term)
+
+            elif action_text == constants.ACTION_SM_SET_PROTECTION_I:
+                if self.smu_protection_current_input is None: QMessageBox.critical(self, "내부 UI 오류", "SMU 보호 전류 입력란이 준비되지 않았습니다."); return None
+                item_str_prefix = constants.SEQ_PREFIX_SM_SET_PROTECTION_I
+                val_str, val_for_display_str = self._get_value_or_loop_var_text(self.smu_protection_current_input, self.smu_protection_current_use_loop_var_checkbox, self.smu_protection_current_loop_var_combo)
+                if not val_str: QMessageBox.warning(self, "값 입력 필요", "보호 전류 값을 입력하세요."); return None
+                add_smu_param(constants.SEQ_PARAM_KEY_CURRENT_LIMIT, val_str, val_for_display_str)
+            else:
+                QMessageBox.warning(self, constants.MSG_TITLE_WARNING, f"Unsupported SMU action: {action_text}"); return None
+            
+            full_action_string_smu = f"{item_str_prefix}: {'; '.join(params_list_for_str) if params_list_for_str else ''}"
+            return item_str_prefix, full_action_string_smu, params_dict_for_data
         
         # Chamber 탭
         elif current_tab_index == 3:
-            if not (self.temp_action_combo and self.temp_params_stack and # Reverted check
-                    self.chamber_set_temp_input and 
-                    self.chamber_check_target_temp_input and 
-                    self.chamber_check_tolerance_input and
-                    self.chamber_check_timeout_input):
-                QMessageBox.critical(self, "내부 UI 오류", "Chamber 액션 UI 요소 준비 안됨."); return None
             if not self._is_device_enabled(constants.SETTINGS_CHAMBER_USE_KEY, "Chamber"): return None
-            
             action_text = self.temp_action_combo.currentText()
-            if action_text == constants.ACTION_CHAMBER_SET_TEMP: item_str_prefix = constants.SEQ_PREFIX_CHAMBER_SET_TEMP
-            elif action_text == constants.ACTION_CHAMBER_CHECK_TEMP: item_str_prefix = constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP
-            else: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_ACTION_NOT_SUPPORTED); return None
+            item_str_prefix = ""
+            params_list_for_str = [] # Ensure this list is used
+            params_dict_for_data = {}
 
-            if item_str_prefix == constants.SEQ_PREFIX_CHAMBER_SET_TEMP:
-                val_str = self.chamber_set_temp_input.text().strip()
-                if not val_str: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "목표 온도 값 입력 필요"); return None
-                try: float(val_str)
-                except ValueError: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_INVALID_NUMERIC_VALUE.format(value=val_str)); return None
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_VALUE}={val_str}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = val_str
-            elif item_str_prefix == constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP:
-                target_temp_str = self.chamber_check_target_temp_input.text().strip()
-                tolerance_str = self.chamber_check_tolerance_input.text().strip() # 기본값은 SequencePlayer에서 처리
-                timeout_str = self.chamber_check_timeout_input.text().strip() # 기본값은 SequencePlayer에서 처리
-                if not target_temp_str: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "목표 온도 값 입력 필요"); return None
-                try:
-                    float(target_temp_str)
-                    if tolerance_str: float(tolerance_str) # 입력 시에만 유효성 검사
-                    if timeout_str: float(timeout_str)   # 입력 시에만 유효성 검사
-                except ValueError: QMessageBox.warning(self, constants.MSG_TITLE_WARNING, "온도/오차/시간 초과 값 형식 오류"); return None
-                params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_VALUE}={target_temp_str}")
-                params_dict_for_data[constants.SEQ_PARAM_KEY_VALUE] = target_temp_str
-                if tolerance_str: # 값이 입력된 경우에만 파라미터 추가
-                    params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_TOLERANCE}={tolerance_str}")
-                    params_dict_for_data[constants.SEQ_PARAM_KEY_TOLERANCE] = tolerance_str
-                if timeout_str: # 값이 입력된 경우에만 파라미터 추가
-                    params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_TIMEOUT}={timeout_str}")
-                    params_dict_for_data[constants.SEQ_PARAM_KEY_TIMEOUT] = timeout_str
+            # Helper to add param to both list and dict if value exists
+            def add_chamber_param(key_const: str, value: Optional[str], value_for_str: Optional[str] = None):
+                if value is not None and value.strip(): # Ensure value is not None and not just whitespace
+                    params_dict_for_data[key_const] = value.strip()
+                    params_list_for_str.append(f"{key_const}={value_for_str if value_for_str is not None else value.strip()}")
+
+            if action_text == constants.ACTION_CHAMBER_SET_TEMP:
+                if self.chamber_set_temp_input is None: QMessageBox.critical(self, "내부 UI 오류", "Chamber 온도 설정 입력란 누락."); return None
+                item_str_prefix = constants.SEQ_PREFIX_CHAMBER_SET_TEMP
+                val_str, val_for_display_str = self._get_value_or_loop_var_text(self.chamber_set_temp_input, self.chamber_set_temp_use_loop_var_checkbox, self.chamber_set_temp_loop_var_combo)
+                if not val_str: QMessageBox.warning(self, "값 입력 필요", "온도 값을 입력하세요."); return None
+                add_chamber_param(constants.SEQ_PARAM_KEY_VALUE, val_str, val_for_display_str)
+
+            elif action_text == constants.ACTION_CHAMBER_CHECK_TEMP:
+                if self.chamber_check_target_temp_input is None or self.chamber_check_tolerance_input is None or self.chamber_check_timeout_input is None: 
+                     QMessageBox.critical(self, "내부 UI 오류", "Chamber 온도 확인 UI 요소 누락."); return None
+                item_str_prefix = constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP
+                
+                val_str, val_for_display_str = self._get_value_or_loop_var_text(self.chamber_check_target_temp_input, self.chamber_check_target_temp_use_loop_var_checkbox, self.chamber_check_target_temp_loop_var_combo)
+                if not val_str: QMessageBox.warning(self, "값 입력 필요", "목표 온도 값을 입력하세요."); return None
+                add_chamber_param(constants.SEQ_PARAM_KEY_VALUE, val_str, val_for_display_str)
+
+                tol_str, tol_for_display_str = self._get_value_or_loop_var_text(self.chamber_check_tolerance_input, self.chamber_check_tolerance_use_loop_var_checkbox, self.chamber_check_tolerance_loop_var_combo)
+                if tol_str: add_chamber_param(constants.SEQ_PARAM_KEY_TOLERANCE, tol_str, tol_for_display_str)
+                
+                timeout_str, timeout_for_display_str = self._get_value_or_loop_var_text(self.chamber_check_timeout_input, self.chamber_check_timeout_use_loop_var_checkbox, self.chamber_check_timeout_loop_var_combo)
+                if timeout_str: add_chamber_param(constants.SEQ_PARAM_KEY_TIMEOUT, timeout_str, timeout_for_display_str)
+            else:
+                QMessageBox.warning(self, constants.MSG_TITLE_WARNING, f"Unsupported Chamber action: {action_text}"); return None
+            
+            full_action_string_temp = f"{item_str_prefix}: {'; '.join(params_list_for_str) if params_list_for_str else ''}"
+            return item_str_prefix, full_action_string_temp, params_dict_for_data
         else:
             print(f"DEBUG_AIP: Unknown tab index: {current_tab_index}, returning None")
             return None
@@ -770,9 +935,11 @@ class ActionInputPanel(QWidget):
             if action_text == constants.ACTION_I2C_WRITE_NAME:
                 if self.i2c_write_name_target_input: self.i2c_write_name_target_input.clear()
                 if self.i2c_write_name_value_input: self.i2c_write_name_value_input.clear(); self.i2c_write_name_value_input.setStyleSheet(""); self.i2c_write_name_value_input.setToolTip("")
+                if self.i2c_write_name_value_use_loop_var_checkbox: self.i2c_write_name_value_use_loop_var_checkbox.setChecked(False)
             elif action_text == constants.ACTION_I2C_WRITE_ADDR:
                 if self.i2c_write_addr_target_input: self.i2c_write_addr_target_input.clear(); self.i2c_write_addr_target_input.setStyleSheet(""); self.i2c_write_addr_target_input.setToolTip("")
                 if self.i2c_write_addr_value_input: self.i2c_write_addr_value_input.clear(); self.i2c_write_addr_value_input.setStyleSheet(""); self.i2c_write_addr_value_input.setToolTip("")
+                if self.i2c_write_addr_value_use_loop_var_checkbox: self.i2c_write_addr_value_use_loop_var_checkbox.setChecked(False)
             elif action_text == constants.ACTION_I2C_READ_NAME:
                 if self.i2c_read_name_target_input: self.i2c_read_name_target_input.clear()
                 if self.i2c_read_name_var_name_input: self.i2c_read_name_var_name_input.clear()
@@ -781,6 +948,7 @@ class ActionInputPanel(QWidget):
                 if self.i2c_read_addr_var_name_input: self.i2c_read_addr_var_name_input.clear()
             elif action_text == constants.ACTION_DELAY:
                 if self.delay_seconds_input: self.delay_seconds_input.setValue(0.01) # 기본값으로 리셋
+                if self.delay_seconds_use_loop_var_checkbox: self.delay_seconds_use_loop_var_checkbox.setChecked(False)
         
         elif current_tab_index == 1 and self.dmm_action_combo: # DMM
             action_text = self.dmm_action_combo.currentText()
@@ -792,20 +960,26 @@ class ActionInputPanel(QWidget):
             action_text = self.smu_action_combo.currentText()
             if action_text in [constants.ACTION_SM_SET_V, constants.ACTION_SM_SET_I]:
                 if self.smu_set_value_input: self.smu_set_value_input.clear()
+                if self.smu_set_value_use_loop_var_checkbox: self.smu_set_value_use_loop_var_checkbox.setChecked(False)
             elif action_text in [constants.ACTION_SM_MEAS_V, constants.ACTION_SM_MEAS_I]:
                 if self.smu_measure_var_name_input: self.smu_measure_var_name_input.clear()
             elif action_text == constants.ACTION_SM_SET_PROTECTION_I:
                 if self.smu_protection_current_input: self.smu_protection_current_input.clear()
+                if self.smu_protection_current_use_loop_var_checkbox: self.smu_protection_current_use_loop_var_checkbox.setChecked(False)
             # 콤보박스들은 선택 유지
             
         elif current_tab_index == 3 and self.temp_action_combo: # Chamber
             action_text = self.temp_action_combo.currentText()
             if action_text == constants.ACTION_CHAMBER_SET_TEMP:
                 if self.chamber_set_temp_input: self.chamber_set_temp_input.clear()
+                if self.chamber_set_temp_use_loop_var_checkbox: self.chamber_set_temp_use_loop_var_checkbox.setChecked(False)
             elif action_text == constants.ACTION_CHAMBER_CHECK_TEMP:
                 if self.chamber_check_target_temp_input: self.chamber_check_target_temp_input.clear()
+                if self.chamber_check_target_temp_use_loop_var_checkbox: self.chamber_check_target_temp_use_loop_var_checkbox.setChecked(False)
                 if self.chamber_check_tolerance_input: self.chamber_check_tolerance_input.clear()
+                if self.chamber_check_tolerance_use_loop_var_checkbox: self.chamber_check_tolerance_use_loop_var_checkbox.setChecked(False)
                 if self.chamber_check_timeout_input: self.chamber_check_timeout_input.clear()
+                if self.chamber_check_timeout_use_loop_var_checkbox: self.chamber_check_timeout_use_loop_var_checkbox.setChecked(False)
 
     def update_completer_model(self, new_model: Optional[QStringListModel]):
         """자동완성 모델을 업데이트합니다."""
@@ -961,19 +1135,19 @@ class ActionInputPanel(QWidget):
         if target_tab_widget == self.i2c_tab_widget:
             if action_type_prefix == constants.SEQ_PREFIX_I2C_WRITE_NAME and self.i2c_write_name_target_input and self.i2c_write_name_value_input:
                 self.i2c_write_name_target_input.setText(params.get(constants.SEQ_PARAM_KEY_TARGET_NAME, ''))
-                self.i2c_write_name_value_input.setText(params.get(constants.SEQ_PARAM_KEY_VALUE, ''))
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_VALUE, ''), self.i2c_write_name_value_input, self.i2c_write_name_value_use_loop_var_checkbox, self.i2c_write_name_value_loop_var_combo)
             elif action_type_prefix == constants.SEQ_PREFIX_I2C_WRITE_ADDR and self.i2c_write_addr_target_input and self.i2c_write_addr_value_input:
                 self.i2c_write_addr_target_input.setText(params.get(constants.SEQ_PARAM_KEY_ADDRESS, ''))
-                self.i2c_write_addr_value_input.setText(params.get(constants.SEQ_PARAM_KEY_VALUE, ''))
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_VALUE, ''), self.i2c_write_addr_value_input, self.i2c_write_addr_value_use_loop_var_checkbox, self.i2c_write_addr_value_loop_var_combo)
             elif action_type_prefix == constants.SEQ_PREFIX_I2C_READ_NAME and self.i2c_read_name_target_input and self.i2c_read_name_var_name_input:
                 self.i2c_read_name_target_input.setText(params.get(constants.SEQ_PARAM_KEY_TARGET_NAME, ''))
-                self.i2c_read_name_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+                self.i2c_read_name_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, '')) # Loop var for var_name not typical
             elif action_type_prefix == constants.SEQ_PREFIX_I2C_READ_ADDR and self.i2c_read_addr_target_input and self.i2c_read_addr_var_name_input:
                 self.i2c_read_addr_target_input.setText(params.get(constants.SEQ_PARAM_KEY_ADDRESS, ''))
-                self.i2c_read_addr_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
+                self.i2c_read_addr_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, '')) # Loop var for var_name not typical
             elif action_type_prefix == constants.SEQ_PREFIX_DELAY and self.delay_seconds_input:
-                self.delay_seconds_input.setValue(float(params.get(constants.SEQ_PARAM_KEY_SECONDS, 0.01)))
-        # DMM
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_SECONDS, '0.01'), None, self.delay_seconds_use_loop_var_checkbox, self.delay_seconds_loop_var_combo, self.delay_seconds_input)
+        # DMM (값 필드 없으므로 루프 변수 로드 로직은 현재 불필요)
         elif target_tab_widget == self.dmm_tab_widget:
             if action_type_prefix in [constants.SEQ_PREFIX_MM_MEAS_V, constants.SEQ_PREFIX_MM_MEAS_I] and self.dmm_measure_var_name_input:
                 self.dmm_measure_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
@@ -982,7 +1156,7 @@ class ActionInputPanel(QWidget):
         # SMU
         elif target_tab_widget == self.smu_tab_widget:
             if action_type_prefix in [constants.SEQ_PREFIX_SM_SET_V, constants.SEQ_PREFIX_SM_SET_I] and self.smu_set_value_input and self.smu_set_terminal_combo:
-                self.smu_set_value_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_VALUE, ''), self.smu_set_value_input, self.smu_set_value_use_loop_var_checkbox, self.smu_set_value_loop_var_combo)
                 self.smu_set_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
             elif action_type_prefix in [constants.SEQ_PREFIX_SM_MEAS_V, constants.SEQ_PREFIX_SM_MEAS_I] and self.smu_measure_var_name_input and self.smu_measure_terminal_combo:
                 self.smu_measure_var_name_input.setText(params.get(constants.SEQ_PARAM_KEY_VARIABLE, ''))
@@ -992,14 +1166,116 @@ class ActionInputPanel(QWidget):
             elif action_type_prefix == constants.SEQ_PREFIX_SM_SET_TERMINAL and self.smu_terminal_combo:
                 self.smu_terminal_combo.setCurrentText(params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT))
             elif action_type_prefix == constants.SEQ_PREFIX_SM_SET_PROTECTION_I and self.smu_protection_current_input:
-                 self.smu_protection_current_input.setText(str(params.get(constants.SEQ_PARAM_KEY_CURRENT_LIMIT, '')))
+                 self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_CURRENT_LIMIT, ''), self.smu_protection_current_input, self.smu_protection_current_use_loop_var_checkbox, self.smu_protection_current_loop_var_combo)
         # Temp
         elif target_tab_widget == self.temp_tab_widget:
             if action_type_prefix == constants.SEQ_PREFIX_CHAMBER_SET_TEMP and self.chamber_set_temp_input:
-                self.chamber_set_temp_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_VALUE, ''), self.chamber_set_temp_input, self.chamber_set_temp_use_loop_var_checkbox, self.chamber_set_temp_loop_var_combo)
             elif action_type_prefix == constants.SEQ_PREFIX_CHAMBER_CHECK_TEMP and self.chamber_check_target_temp_input and self.chamber_check_tolerance_input and self.chamber_check_timeout_input:
-                self.chamber_check_target_temp_input.setText(str(params.get(constants.SEQ_PARAM_KEY_VALUE, '')))
-                self.chamber_check_tolerance_input.setText(str(params.get(constants.SEQ_PARAM_KEY_TOLERANCE, constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG)))
-                self.chamber_check_timeout_input.setText(str(params.get(constants.SEQ_PARAM_KEY_TIMEOUT, constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC)))
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_VALUE, ''), self.chamber_check_target_temp_input, self.chamber_check_target_temp_use_loop_var_checkbox, self.chamber_check_target_temp_loop_var_combo)
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_TOLERANCE, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TOLERANCE_DEG)), self.chamber_check_tolerance_input, self.chamber_check_tolerance_use_loop_var_checkbox, self.chamber_check_tolerance_loop_var_combo)
+                self._load_value_or_loop_var(params.get(constants.SEQ_PARAM_KEY_TIMEOUT, str(constants.DEFAULT_CHAMBER_CHECK_TEMP_TIMEOUT_SEC)), self.chamber_check_timeout_input, self.chamber_check_timeout_use_loop_var_checkbox, self.chamber_check_timeout_loop_var_combo)
 
         self._update_active_sub_tab_fields() # StackedWidget 페이지 업데이트 강제
+
+    def _load_value_or_loop_var(self, value_str: str, 
+                                line_edit: Optional[QLineEdit], 
+                                checkbox: Optional[QCheckBox], 
+                                combobox: Optional[QComboBox],
+                                spinbox: Optional[QDoubleSpinBox] = None):
+        """Helper to load a value into either a line_edit/spinbox or set loop var UI."""
+        if not checkbox or not combobox: return
+
+        is_loop_var_format = isinstance(value_str, str) and value_str.startswith('{') and value_str.endswith('}')
+        
+        if is_loop_var_format:
+            loop_var_name_match = re.match(r"\{(.*?)\}", value_str)
+            if loop_var_name_match:
+                loop_var_name = loop_var_name_match.group(1)
+                checkbox.setChecked(True)
+                idx = combobox.findText(loop_var_name)
+                if idx != -1: combobox.setCurrentIndex(idx)
+                else: combobox.setCurrentIndex(0)
+                if line_edit: line_edit.setText("")
+                if spinbox: spinbox.setValue(spinbox.minimum()) 
+            else: 
+                checkbox.setChecked(False)
+                if line_edit: line_edit.setText(value_str)
+                if spinbox:
+                    try: spinbox.setValue(float(value_str))
+                    except ValueError: spinbox.setValue(spinbox.minimum())
+        else: 
+            checkbox.setChecked(False)
+            if line_edit: line_edit.setText(value_str)
+            if spinbox:
+                try: spinbox.setValue(float(value_str))
+                except ValueError: spinbox.setValue(spinbox.minimum())
+        
+        self._toggle_loop_var_ui(checkbox.isChecked(), line_edit, combobox, spinbox)
+        
+    # === 루프 변수 목록 업데이트 함수 추가 ===
+    def update_loop_variables(self, loop_vars: List[str]):
+        """현재 활성화된 루프 변수 목록으로 내부 모델을 업데이트합니다."""
+        if self.active_loop_variables_model is None:
+            self.active_loop_variables_model = QStringListModel(self) # self를 parent로 전달
+        
+        current_list = [""] # 항상 "선택 안함" 옵션으로 시작
+        if loop_vars:
+            current_list.extend(loop_vars)
+        
+        self.active_loop_variables_model.setStringList(current_list)
+        print(f"ActionInputPanel: Loop variables updated in model: {current_list}")
+
+        combos_to_update = [
+            self.i2c_write_name_value_loop_var_combo,
+            self.i2c_write_addr_value_loop_var_combo,
+            self.delay_seconds_loop_var_combo,
+            self.smu_set_value_loop_var_combo,
+            self.smu_protection_current_loop_var_combo,
+            self.chamber_set_temp_loop_var_combo,
+            self.chamber_check_target_temp_loop_var_combo,
+            self.chamber_check_tolerance_loop_var_combo,
+            self.chamber_check_timeout_loop_var_combo
+        ]
+        for combo in combos_to_update:
+            if combo:
+                # 모델이 이미 설정되어 있어야 하므로, setModel은 __init__에서 한번만 호출하도록 변경 고려
+                # 여기서는 목록 변경 시 현재 인덱스를 초기화하거나 유효한 값으로 설정
+                if combo.model() != self.active_loop_variables_model: # 모델이 다르면 설정
+                    combo.setModel(self.active_loop_variables_model)
+                combo.setCurrentIndex(0) 
+    # === 루프 변수 목록 업데이트 함수 끝 ===
+
+    def _toggle_smu_vsource_terminal_visibility(self, selected_state_text: str):
+        """SMU Output Control 상태에 따라 V-Source용 터미널 콤보박스 가시성 조절"""
+        is_vsource = (selected_state_text == constants.SMU_OUTPUT_STATE_VSOURCE)
+        if self.smu_vsource_terminal_label: self.smu_vsource_terminal_label.setVisible(is_vsource)
+        if self.smu_vsource_terminal_combo: self.smu_vsource_terminal_combo.setVisible(is_vsource)
+
+    # _get_value_or_loop_var_text method was incorrectly placed inside load_action_data_for_editing
+    # Moving it here to be a proper method of ActionInputPanel class.
+    def _get_value_or_loop_var_text(self, line_edit: Optional[QLineEdit], checkbox: Optional[QCheckBox], combobox: Optional[QComboBox], spinbox: Optional[QDoubleSpinBox] = None) -> Tuple[Optional[str], Optional[str]]:
+        """Helper to get value for parameters, either direct input or loop variable placeholder."""
+        value_for_data: Optional[str] = None
+        value_for_display: Optional[str] = None
+
+        if checkbox and checkbox.isChecked() and combobox:
+            selected_loop_var_text = combobox.currentText()
+            selected_loop_var_index = combobox.currentIndex()
+            if selected_loop_var_text and selected_loop_var_index > 0: # Index 0 is usually "Select..."
+                placeholder = f"{{{selected_loop_var_text}}}"
+                value_for_data = placeholder
+                value_for_display = placeholder
+            else:
+                # This case should ideally be caught by validation before calling this helper
+                return None, None 
+        elif line_edit:
+            raw_text = line_edit.text().strip()
+            value_for_data = raw_text
+            value_for_display = raw_text
+        elif spinbox: # For QDoubleSpinBox like Delay
+            raw_val = spinbox.value()
+            value_for_data = str(raw_val)
+            value_for_display = str(raw_val)
+        
+        return value_for_data, value_for_display

@@ -78,19 +78,21 @@ class SequenceIOManager:
         """
         JSON 파일에서 계층적인 시퀀스 아이템 리스트("sequence_items")를 로드합니다.
         """
+        print(f"[SequenceIOManager] Attempting to load sequence from: {filepath}") # 로드 시도 경로 로깅
         if not os.path.exists(filepath):
             print(f"[SequenceIOManager] Error loading: File not found '{filepath}'")
             return None
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+            print(f"[SequenceIOManager] Successfully parsed JSON from '{filepath}'. Data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+
             # "sequence_items" 키를 우선적으로 확인
             if "sequence_items" in data and isinstance(data["sequence_items"], list):
                 # TODO: 여기서 각 아이템이 SimpleActionItem 또는 LoopActionItem 구조를 따르는지
                 #       세부적인 유효성 검사를 추가할 수 있습니다 (예: pydantic 사용).
                 #       현재는 타입 캐스팅 없이 반환합니다.
-                print(f"[SequenceIOManager] Sequence items loaded successfully from '{filepath}'")
+                print(f"[SequenceIOManager] Sequence items loaded successfully from '{filepath}' using 'sequence_items' key.")
                 return data["sequence_items"]
             elif "sequence_lines" in data and isinstance(data["sequence_lines"], list):
                 # 하위 호환성을 위해 기존 "sequence_lines" (List[str]) 처리
@@ -105,20 +107,21 @@ class SequenceIOManager:
                         if params_str.strip():
                             param_pairs = params_str.split(';')
                             for pair in param_pairs:
-                                if '=' in pair:
+                                if '=' in pair: 
                                     key, value = pair.split('=', 1)
                                     params_dict_parsed[key.strip()] = value.strip()
                         
                         simple_item: SimpleActionItem = {
-                            "item_id": f"legacy_item_{idx}", # 임시 ID
+                            "item_id": f"legacy_item_{idx}_{datetime.now().timestamp()}", # 고유 ID 강화
                             "action_type": action_type_str.strip(),
                             "parameters": params_dict_parsed,
                             "display_name": line_str.strip() # 간단히 전체 라인을 표시명으로
                         }
                         converted_items.append(simple_item)
-                    except ValueError:
-                        print(f"[SequenceIOManager] Error converting legacy line: '{line_str}'. Skipping.")
+                    except ValueError as e_parse_line:
+                        print(f"[SequenceIOManager] Error converting legacy line: '{line_str}'. Error: {e_parse_line}. Skipping.")
                         # 유효하지 않은 레거시 라인은 무시하거나, 오류 처리
+                print(f"[SequenceIOManager] Converted {len(converted_items)} items from legacy 'sequence_lines'.")
                 return converted_items
             elif "steps" in data and isinstance(data["steps"], list): # Legacy support for "steps"
                 print(f"[SequenceIOManager] Legacy sequence (steps) loaded from '{filepath}'")
@@ -130,7 +133,7 @@ class SequenceIOManager:
                 print(f"[SequenceIOManager] WARNING: Conversion for 'steps' key not fully implemented yet in this pass.")
                 return converted_steps # 임시
             else:
-                print(f"[SequenceIOManager] Error: '{filepath}' does not contain 'sequence_items', 'sequence_lines', or valid 'steps' list.")
+                print(f"[SequenceIOManager] Error: '{filepath}' does not contain 'sequence_items' or 'sequence_lines'.")
                 return None
         except json.JSONDecodeError as e:
             print(f"[SequenceIOManager] Error decoding JSON from '{filepath}': {e}")
@@ -139,7 +142,9 @@ class SequenceIOManager:
             print(f"[SequenceIOManager] IOError loading sequence from '{filepath}': {e}")
             return None
         except Exception as e:
-            print(f"[SequenceIOManager] Unexpected error loading sequence from '{filepath}': {e}")
+            print(f"[SequenceIOManager] Unexpected error loading sequence from '{filepath}': {type(e).__name__} - {e}")
+            import traceback
+            traceback.print_exc() # 전체 트레이스백 출력
             return None
 
     def get_saved_sequences(self) -> List[Dict[str, str]]: # Return type changed

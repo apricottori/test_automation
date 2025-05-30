@@ -3,7 +3,7 @@ import time
 import re # Add re import
 # typing 모듈에서 필요한 요소들을 임포트합니다.
 from typing import Optional, Tuple, Any, ForwardRef, TYPE_CHECKING 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, QObject
 
 # core 패키지 내 모듈 임포트
 from core import helpers 
@@ -20,27 +20,31 @@ if TYPE_CHECKING:
     # SequencePlayer도 타입 힌트용으로만 임포트 시도
     from core.sequence_player import SequencePlayer as SequencePlayer_Typing_Hint
 
+# 미리 None으로 초기화
+evb_runtime_class = None
+keithley2401_runtime_class = None
+agilent34401a_runtime_class = None
+su241_runtime_module = None 
+
 try:
     from raonpy.rti.efm8evb import EVB as RuntimeEVB # 런타임용
     from raonpy.device.keithley2401 import KEITHLEY2401 as RuntimeKEITHLEY2401
     from raonpy.device.agilent34401a import Agilent34401A as RuntimeAgilent34401A
-    from raonpy.device import su241 as runtime_raon_su241 
-    EVB_런타임 = RuntimeEVB # 명확한 이름 사용
-    KEITHLEY2401_런타임 = RuntimeKEITHLEY2401
-    Agilent34401A_런타임 = RuntimeAgilent34401A
-    raon_su241_런타임 = runtime_raon_su241
+    import raonpy.device.su241 as actual_su241_module # 모듈을 직접 import
+    
+    evb_runtime_class = RuntimeEVB
+    keithley2401_runtime_class = RuntimeKEITHLEY2401
+    agilent34401a_runtime_class = RuntimeAgilent34401A
+    su241_runtime_module = actual_su241_module # import된 모듈을 변수에 할당
+
 except ImportError as e:
     print(f"Critical Error: raonpy 라이브러리 또는 일부 모듈을 찾을 수 없습니다. {e}")
-    # 타입 힌트용 클래스가 로드되지 않았을 수 있으므로, 런타임 대체용 None 설정
-    EVB_런타임 = None 
-    KEITHLEY2401_런타임 = None
-    Agilent34401A_런타임 = None
-    raon_su241_런타임 = None
-    # 타입 힌트용도 None으로 설정하여 AttributeError 방지 (선택적)
+    # 변수들은 이미 위에서 None으로 초기화되었으므로, 여기서는 추가 할당 불필요
     if 'EVB' not in globals(): EVB = None # type: ignore
     if 'KEITHLEY2401' not in globals(): KEITHLEY2401 = None # type: ignore
     if 'Agilent34401A' not in globals(): Agilent34401A = None # type: ignore
     if 'raon_su241_typing' not in globals(): raon_su241_typing = None # type: ignore
+    if 'SequencePlayer_Typing_Hint' not in globals(): SequencePlayer_Typing_Hint = None # type: ignore
 
 
 # SequencePlayer 클래스에 대한 Forward Reference 정의
@@ -57,7 +61,7 @@ class I2CDevice:
         # 또는 if TYPE_CHECKING: self.evb_instance: Optional[EVB] = None
         self.is_opened: bool = False 
 
-        if EVB_런타임 is None: 
+        if evb_runtime_class is None: 
             print(f"Error: EVB 모듈 로드 실패. I2C 장치를 초기화할 수 없습니다.")
             return
 
@@ -70,7 +74,7 @@ class I2CDevice:
             else:
                 self.chip_id = int(chip_id_str) 
             
-            self.evb_instance = EVB_런타임() 
+            self.evb_instance = evb_runtime_class() 
             try:
                 if self.evb_instance: 
                     self.evb_instance.open()
@@ -169,41 +173,46 @@ class GPIBDevice:
     def __init__(self, serial_number_str: str, device_name: str, device_class_ref: Any):
         self.serial_number = serial_number_str 
         self.device_name = device_name
-        self.instrument: Optional[Any] = None # Any는 유지하거나, 더 구체적인 기본 클래스 타입으로 변경 가능
+        self.instrument: Optional[Any] = None
         self.is_connected: bool = False
-        self.device_class_ref = device_class_ref # 실제 런타임 클래스 참조
 
         self._cached_set_voltage: Optional[float] = None
         self._cached_set_current: Optional[float] = None
         self._cached_target_temperature: Optional[float] = None
 
         actual_device_class = None
-        if device_name == "Multimeter (Agilent34401A)": actual_device_class = Agilent34401A_런타임
-        elif device_name == "Sourcemeter (Keithley2401)": actual_device_class = KEITHLEY2401_런타임
-        elif device_name == "Chamber (SU241)": actual_device_class = raon_su241_런타임.SU241 if raon_su241_런타임 else None
-        else: actual_device_class = self.device_class_ref
+        if device_name == "Multimeter (Agilent34401A)":
+            actual_device_class = agilent34401a_runtime_class
+        elif device_name == "Sourcemeter (Keithley2401)":
+            actual_device_class = keithley2401_runtime_class
+        elif device_name == "Chamber (SU241)":
+            actual_device_class = device_class_ref # Chamber에서 전달된 클래스 참조 사용
+            if actual_device_class is None: 
+                if su241_runtime_module and hasattr(su241_runtime_module, 'SU241'):
+                    actual_device_class = su241_runtime_module.SU241
+                else:
+                    print(f"Error: SU241 class not found for Chamber via device_class_ref or direct import.")
+        else: 
+            actual_device_class = device_class_ref
 
         if actual_device_class is None:
             print(f"Error: {self.device_name}의 device class 로드 실패. 장치를 초기화할 수 없습니다.")
-            return
+            self.instrument = None 
+            return 
 
-        is_chamber = "Chamber" in self.device_name 
         try:
-            if device_name in ["Multimeter (Agilent34401A)", "Sourcemeter (Keithley2401)"]:
-                self.instrument = actual_device_class() # No serial_number_str here
-            elif serial_number_str and not is_chamber:
-                self.instrument = actual_device_class(serial_number_str)
-            elif is_chamber:
+            if device_name in ["Multimeter (Agilent34401A)", "Sourcemeter (Keithley2401)", "Chamber (SU241)"]:
                 self.instrument = actual_device_class()
-            else:
-                print(f"Error: Insufficient information to initialize {self.device_name}.")
-                return 
-
+            elif serial_number_str: 
+                self.instrument = actual_device_class(serial_number_str)
+            else: 
+                self.instrument = actual_device_class()
+            
             if self.instrument and hasattr(self.instrument, 'set_verbose'):
                  self.instrument.set_verbose(False) 
             print(f"Info: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'}) 인스턴스가 생성되었습니다.")
         except TypeError as te: 
-             print(f"Error: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'}) 인스턴스 생성 중 TypeError: {te}. raonpy 라이브러리 API를 확인하세요.")
+             print(f"Error: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'}) 인스턴스 생성 중 TypeError: {te}. raonpy 라이브러리 API 또는 생성자 호출 방식을 확인하세요.")
              self.instrument = None
         except Exception as e:
             print(f"Error: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'}) 인스턴스 생성 중 오류: {e}")
@@ -217,11 +226,16 @@ class GPIBDevice:
             print(f"Info: {self.device_name}이(가) 이미 연결되어 있습니다.")
             return True
         try:
-            # For instruments initialized without address, pass it to open/connect
             if self.device_name in ["Multimeter (Agilent34401A)", "Sourcemeter (Keithley2401)"] and self.serial_number:
-                self.instrument.open(self.serial_number) # open() takes the address
+                self.instrument.open(self.serial_number)
+            elif self.device_name == "Chamber (SU241)" and self.serial_number:
+                try:
+                    self.instrument.open(self.serial_number)
+                except Exception as e_open_chamber_with_serial:
+                    print(f"Warning: Chamber open with serial '{self.serial_number}' failed ({e_open_chamber_with_serial}). Trying open without serial.")
+                    self.instrument.open() 
             else:
-                self.instrument.open() # For Chamber or others not needing address at open
+                self.instrument.open()
 
             self.is_connected = True
             print(f"Info: {self.device_name}(SN/Addr: {self.serial_number if self.serial_number else 'N/A'})에 성공적으로 연결되었습니다.")
@@ -316,7 +330,7 @@ class GPIBDevice:
 class Multimeter(GPIBDevice):
     def __init__(self, serial_number_str: str):
         # Match the device_name string used in your connect logic
-        super().__init__(serial_number_str, "Multimeter (Agilent34401A)", Agilent34401A_런타임)
+        super().__init__(serial_number_str, "Multimeter (Agilent34401A)", agilent34401a_runtime_class)
 
     def measure_voltage(self) -> tuple[bool, Optional[float]]:
         if not self.is_connected or not self.instrument: 
@@ -428,8 +442,10 @@ class Multimeter(GPIBDevice):
 
 class Sourcemeter(GPIBDevice):
     def __init__(self, serial_number_str: str):
-        super().__init__(serial_number_str, "Sourcemeter (Keithley2401)", KEITHLEY2401_런타임)
-    # ... (Sourcemeter의 나머지 메소드들은 이전과 동일하게 유지) ...
+        super().__init__(serial_number_str, "Sourcemeter (Keithley2401)", keithley2401_runtime_class)
+        self._current_terminal: str = constants.TERMINAL_FRONT # 현재 활성 터미널 저장, 기본값 FRONT
+        self._cached_set_voltage = 0.0 # V_SOURCE 기본 전압 0V로 초기화
+
     def connect(self) -> bool:
         if super().connect():
             return self.reset() and self.gpib_write("*CLS")
@@ -438,33 +454,64 @@ class Sourcemeter(GPIBDevice):
     def set_terminal(self, terminal_type_str: str) -> bool:
         cmd = f":ROUTe:TERMinals {terminal_type_str.upper()}"
         success = self.gpib_write(cmd)
-        if success: time.sleep(1.0) # Changed to 1.0s based on reference
+        if success: 
+            self._current_terminal = terminal_type_str.upper() # 현재 터미널 업데이트
+            time.sleep(1.0) # Changed to 1.0s based on reference
         return success
 
     def enable_output(self, state: bool) -> bool:
         cmd = f":OUTPut:STATe {'ON' if state else 'OFF'}"
         return self.gpib_write(cmd)
 
-    def set_voltage(self, voltage_float: float, terminal_type_str: str = constants.TERMINAL_FRONT) -> bool:
+    def set_voltage(self, voltage_float: float) -> bool:
+        """오직 전압만 세팅. 터미널/출력 등은 별도 액션에서만."""
         if not self.is_connected: return False
-        if not self.set_terminal(terminal_type_str): return False
-        if not self.gpib_write(":SOURce:FUNCtion VOLTage"): return False
-        if not self.gpib_write(f":SOURce:VOLTage:LEVel {voltage_float:.6f}"): return False
-        if not self.enable_output(True): return False
-        
+        if not self.gpib_write(":SOURce:FUNCtion VOLTage"): 
+            print(f"Error: {self.device_name} 전압 소스 모드 설정 실패 in set_voltage.")
+            return False
+        if not self.gpib_write(f":SOURce:VOLTage:LEVel {voltage_float:.6f}"):
+            print(f"Error: {self.device_name} 전압 레벨 {voltage_float:.6f}V 설정 실패.")
+            return False
         self._cached_set_voltage = voltage_float 
-        self._cached_set_current = None 
+        self._cached_set_current = None # 전압 설정 시 전류 캐시는 초기화
+        print(f"Info: {self.device_name} 전압 레벨 {voltage_float:.3f}V 로 설정됨 (출력은 아직 비활성 상태일 수 있음).")
         return True
 
-    def set_current(self, current_float: float, terminal_type_str: str = constants.TERMINAL_FRONT) -> bool:
+    def configure_vsource_and_enable(self) -> bool:
+        """V_SOURCE: 전압 소스 모드, 전류 센싱, 전류 자동 범위, 출력 ON, LOCAL 만 실행. 터미널/전압 세팅 없음."""
         if not self.is_connected: return False
-        if not self.set_terminal(terminal_type_str): return False
+        if not self.gpib_write(":SOURce:FUNCtion VOLTage"): 
+            print(f"Error: {self.device_name} 전압 소스 모드 설정 실패.")
+            return False
+        if not self.gpib_write(":SENSe:FUNCtion 'CURRent:DC'"):
+            print(f"Error: {self.device_name} 전류 감지 기능 설정 실패.")
+            return False
+        if not self.gpib_write(":SENSe:CURRent:DC:RANGe:AUTO ON"):
+            print(f"Error: {self.device_name} 전류 감지 자동 범위 설정 실패.")
+            return False
+        if not self.enable_output(True): 
+            print(f"Error: {self.device_name} 출력 활성화 실패.")
+            return False
+        if not self.gpib_write(":SYSTem:LOCal"): 
+            print(f"Warning: {self.device_name} 로컬 모드 전환 실패.")
+        print(f"Info: {self.device_name} V_SOURCE 구성 완료 (출력 ON, 전압: {self._cached_set_voltage:.3f}V, 터미널: {self._current_terminal}).")
+        return True
+
+    def set_current(self, current_float: float) -> bool: # terminal_type_str 파라미터 제거
+        if not self.is_connected: return False
+        # 터미널 설정은 여기서 하지 않음.
         if not self.gpib_write(":SOURce:FUNCtion CURRent"): return False
         if not self.gpib_write(f":SOURce:CURRent:LEVel {current_float:.6e}"): return False
+        # 전류 소스 설정 시, 전압 감지 및 보호 설정이 필요할 수 있음. 현재는 레벨만 설정.
+        # 예: if not self.gpib_write(":SENSe:FUNCtion 'VOLTage:DC'"): return False
+        # 예: if not self.gpib_write(":SENSe:VOLTage:DC:RANGe:AUTO ON"): return False
+        # 예: if not self.set_protection_voltage(20.0): return False # 보호 전압 설정
+
         if not self.enable_output(True): return False
         
         self._cached_set_current = current_float 
         self._cached_set_voltage = None 
+        print(f"Info: {self.device_name} 전류 레벨 {current_float:.3e}A 로 설정됨 (출력 활성화됨, 터미널: {self._current_terminal}).")
         return True
 
     def set_protection_current(self, current_limit_amps: float) -> bool:
@@ -472,31 +519,18 @@ class Sourcemeter(GPIBDevice):
         cmd = f":SENSe:CURRent:PROTection {current_limit_amps:.6e}" # Keep full word "PROTection" as it's more standard
         return self.gpib_write(cmd)
 
-    def _configure_measurement(self, meas_type: str = "VOLT", terminal: str = constants.TERMINAL_FRONT) -> bool:
-        # This method might be simplified or removed if directly using measure_voltage/current from raonpy
-        if not self.set_terminal(terminal): return False
-        if meas_type.upper() == "VOLT":
-            if not self.gpib_write(":SENSe:FUNCtion 'VOLTage:DC'"): return False # SCPI standard for sense function
-            if not self.gpib_write(":SENSe:VOLTage:DC:NPLCycles 1"): return False 
-        elif meas_type.upper() == "CURR":
-            if not self.gpib_write(":SENSe:FUNCtion 'CURRent:DC'"): return False # SCPI standard for sense function
-            if not self.gpib_write(":SENSe:CURRent:DC:NPLCycles 1"): return False
-        else: 
-            print(f"Error: 지원되지 않는 측정 타입입니다: {meas_type}")
-            return False
-        # :FORMat:ELEMents is usually for configuring what :READ? or :FETCh? returns.
-        # If using :MEASure:VOLTage? or :MEASure:CURRent?, this might not be strictly necessary
-        # as these commands typically return only the primary measurement.
-        # For now, keeping it for compatibility with potential :READ? usage if raonpy methods are bypassed.
-        if not self.gpib_write(f":FORMat:ELEMents {meas_type.upper()}"): return False
-        return True
-
-    def measure_voltage(self, terminal_type_str: str = constants.TERMINAL_FRONT) -> tuple[bool, Optional[float]]:
+    def measure_voltage(self, terminal_type_str: Optional[str] = None) -> tuple[bool, Optional[float]]: # 터미널 선택적
         if not self.is_connected or not self.instrument: return False, None
-        if not self.set_terminal(terminal_type_str): # Ensure terminal is set
-            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str})")
+        
+        # 명시적으로 터미널이 주어지면 설정, 아니면 현재 설정된 터미널 사용
+        if terminal_type_str and not self.set_terminal(terminal_type_str):
+            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str}) for measure_voltage")
             return False, None
         
+        # 전압 측정을 위해 SENSE 기능 설정 (필요시)
+        # if not self.gpib_write(":SENSe:FUNCtion 'VOLTage:DC'"): return False, None
+        # if not self.gpib_write(":SENSe:VOLTage:DC:RANGe:AUTO ON"): return False, None
+
         response_str: Optional[str] = None
         try:
             if hasattr(self.instrument, 'measure_voltage'):
@@ -522,11 +556,18 @@ class Sourcemeter(GPIBDevice):
             print(f"Error: Sourcemeter 전압 측정 중 예외 발생: {e_meas}")
             return False, None
 
-    def measure_current(self, terminal_type_str: str = constants.TERMINAL_FRONT) -> tuple[bool, Optional[float]]:
+    def measure_current(self, terminal_type_str: Optional[str] = None) -> tuple[bool, Optional[float]]: # 터미널 선택적
         if not self.is_connected or not self.instrument: return False, None
-        if not self.set_terminal(terminal_type_str): # Ensure terminal is set
-            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str})")
+
+        # 명시적으로 터미널이 주어지면 설정, 아니면 현재 설정된 터미널 사용
+        if terminal_type_str and not self.set_terminal(terminal_type_str):
+            print(f"Error: Sourcemeter 터미널 설정 실패 ({terminal_type_str}) for measure_current")
             return False, None
+        
+        # 전류 측정을 위해 SENSE 기능 설정 (set_voltage 또는 configure_vsource_and_enable에서 이미 했을 수 있음)
+        # 하지만 독립적인 측정 함수 호출 시 안전하게 다시 설정하는 것이 좋을 수 있음.
+        if not self.gpib_write(":SENSe:FUNCtion 'CURRent:DC'"): return False, None
+        if not self.gpib_write(":SENSe:CURRent:DC:RANGe:AUTO ON"): return False, None
 
         response_str: Optional[str] = None
         try:
@@ -554,16 +595,26 @@ class Sourcemeter(GPIBDevice):
             return False, None
 
 
-class Chamber(GPIBDevice):
-    log_message_signal = pyqtSignal(str) 
+class Chamber(GPIBDevice, QObject):
+    log_message_signal = pyqtSignal(str)
+    def __init__(self, serial_number_str: Optional[str] = None, parent: Optional[QObject] = None):
+        # 1. GPIBDevice의 __init__을 먼저 호출합니다.
+        safe_serial = serial_number_str if serial_number_str is not None else ""
+        
+        device_class_to_pass = None
+        if su241_runtime_module and hasattr(su241_runtime_module, 'SU241'):
+            device_class_to_pass = su241_runtime_module.SU241
+        else:
+            print("Warning (Chamber.__init__): runtime_su241_module.SU241 not found for Chamber device_class_ref.")
+            
+        GPIBDevice.__init__(self, 
+                              serial_number_str=safe_serial, 
+                              device_name="Chamber (SU241)", 
+                              device_class_ref=device_class_to_pass)
 
-    def __init__(self, serial_number_str: Optional[str] = None):
-        # raonpy.device.su241.SU241 클래스 참조 전달
-        device_class_to_use = raon_su241_런타임.SU241 if raon_su241_런타임 and hasattr(raon_su241_런타임, 'SU241') else None
-        super().__init__(serial_number_str if serial_number_str else "", 
-                         "Chamber (SU241)",
-                         device_class_to_use)
-        # SequencePlayerType은 이 파일 상단에서 ForwardRef로 정의됨
+        # 2. QObject의 __init__을 명시적으로 호출합니다.
+        QObject.__init__(self, parent) # Pass parent to QObject                              
+        
         self.stop_flag_ref: Optional[SequencePlayerType] = None 
 
     def set_stop_flag_ref(self, player_instance: SequencePlayerType): # 타입 힌트 수정
@@ -574,13 +625,22 @@ class Chamber(GPIBDevice):
     def set_target_temperature(self, temperature_float: float) -> bool:
         if not self.is_connected or not self.instrument: return False
         try:
-            if hasattr(self.instrument, 'set_target_temp'): self.instrument.set_target_temp(temperature_float)
-            elif hasattr(self.instrument, 'set_temp'): self.instrument.set_temp(temperature_float)
-            elif hasattr(self.instrument, 'setTemperature'): self.instrument.setTemperature(temperature_float)
+            # Log the attempt to set temperature
+            print(f"DEBUG_CHAMBER: Attempting to set target temperature to {temperature_float}°C via raonpy.")
+            if hasattr(self.instrument, 'set_target_temp'): 
+                self.instrument.set_target_temp(temperature_float)
+                print(f"DEBUG_CHAMBER: Called self.instrument.set_target_temp({temperature_float})")
+            elif hasattr(self.instrument, 'set_temp'): 
+                self.instrument.set_temp(temperature_float)
+                print(f"DEBUG_CHAMBER: Called self.instrument.set_temp({temperature_float})")
+            elif hasattr(self.instrument, 'setTemperature'): 
+                self.instrument.setTemperature(temperature_float)
+                print(f"DEBUG_CHAMBER: Called self.instrument.setTemperature({temperature_float})")
             else:
                 print(f"Error: {self.device_name}에 온도 설정 메서드가 없거나 SCPI 명령 전송 실패.")
                 return False
             self._cached_target_temperature = temperature_float 
+            print(f"DEBUG_CHAMBER: Target temperature {temperature_float}°C set and cached.")
             return True
         except Exception as e:
             print(f"Error: Chamber 목표 온도 설정 중 오류: {e}")
@@ -589,8 +649,13 @@ class Chamber(GPIBDevice):
     def start_operation(self) -> bool:
         if not self.is_connected or not self.instrument: return False
         try:
-            if hasattr(self.instrument, 'start'): self.instrument.start()
-            elif hasattr(self.instrument, 'run'): self.instrument.run()
+            print(f"DEBUG_CHAMBER: Attempting to start chamber operation via raonpy.")
+            if hasattr(self.instrument, 'start'): 
+                self.instrument.start()
+                print(f"DEBUG_CHAMBER: Called self.instrument.start()")
+            elif hasattr(self.instrument, 'run'): 
+                self.instrument.run()
+                print(f"DEBUG_CHAMBER: Called self.instrument.run()")
             else: 
                 print(f"Error: {self.device_name}에 동작 시작 메서드가 없거나 SCPI 명령 전송 실패.")
                 return False
@@ -601,9 +666,16 @@ class Chamber(GPIBDevice):
         if not self.is_connected or not self.instrument: return False, None
         current_temp_val: Any = None
         try:
-            if hasattr(self.instrument, 'get_current_temp'): current_temp_val = self.instrument.get_current_temp()
-            elif hasattr(self.instrument, 'get_temp'): current_temp_val = self.instrument.get_temp()
-            elif hasattr(self.instrument, 'readTemperature'): current_temp_val = self.instrument.readTemperature()
+            print(f"DEBUG_CHAMBER_GET_TEMP: Attempting to get current temperature via raonpy.")
+            if hasattr(self.instrument, 'get_current_temp'): 
+                current_temp_val = self.instrument.get_current_temp()
+                print(f"DEBUG_CHAMBER_GET_TEMP: Raw value from get_current_temp: {current_temp_val}")
+            elif hasattr(self.instrument, 'get_temp'): 
+                current_temp_val = self.instrument.get_temp()
+                print(f"DEBUG_CHAMBER_GET_TEMP: Raw value from get_temp: {current_temp_val}")
+            elif hasattr(self.instrument, 'readTemperature'): 
+                current_temp_val = self.instrument.readTemperature()
+                print(f"DEBUG_CHAMBER_GET_TEMP: Raw value from readTemperature: {current_temp_val}")
             else:
                 print(f"Error: {self.device_name}에 현재 온도 읽기 메서드가 없거나 SCPI 쿼리 실패.")
                 return False, None
@@ -650,36 +722,43 @@ class Chamber(GPIBDevice):
         start_time = time.time()
         last_measured_temp: Optional[float] = None
         
-        # log_message_signal은 Chamber 클래스에 직접 정의되어야 함
-        if self.log_message_signal: 
-            self.log_message_signal.emit(f"Chamber: 온도 안정화 시작 (목표: {target_temp}°C, 허용오차: ±{tolerance}°C, 제한시간: {timeout_sec}초)")
+        log_msg_prefix = "Chamber (is_temperature_stable):"
+        self.log_message_signal.emit(f"{log_msg_prefix} 온도 안정화 시작 (목표: {target_temp}°C, 허용오차: ±{tolerance}°C, 제한시간: {timeout_sec}초)")
+        print(f"DEBUG_CHAMBER_STABLE: Entry - Target: {target_temp}, Tol: {tolerance}, Timeout: {timeout_sec}")
 
         while time.time() - start_time < timeout_sec:
-            # SequencePlayer의 request_stop_flag를 확인 (참조가 설정되었다면)
             if self.stop_flag_ref and self.stop_flag_ref.request_stop_flag:
-                if self.log_message_signal: self.log_message_signal.emit("Chamber: 온도 안정화 대기 중 중단 요청됨.")
+                msg_stop = f"{log_msg_prefix} 온도 안정화 대기 중 중단 요청됨."
+                self.log_message_signal.emit(msg_stop)
+                print(f"DEBUG_CHAMBER_STABLE: {msg_stop}")
                 return False, last_measured_temp
 
             read_success, current_temp = self.get_current_temperature()
+            print(f"DEBUG_CHAMBER_STABLE: Loop - Read success: {read_success}, Current temp: {current_temp}")
             if read_success and current_temp is not None:
                 last_measured_temp = current_temp
-                if self.log_message_signal: self.log_message_signal.emit(f"  Chamber: 현재 {current_temp:.1f}°C (목표 {target_temp}°C)")
+                self.log_message_signal.emit(f"  Chamber: 현재 {current_temp:.1f}°C (목표 {target_temp}°C)")
                 if abs(current_temp - target_temp) <= tolerance:
-                    if self.log_message_signal: self.log_message_signal.emit(f"Chamber: 온도가 {target_temp}°C 로 안정화되었습니다 (현재: {current_temp:.1f}°C).")
+                    msg_stable = f"{log_msg_prefix} 온도가 {target_temp}°C 로 안정화되었습니다 (현재: {current_temp:.1f}°C)."
+                    self.log_message_signal.emit(msg_stable)
+                    print(f"DEBUG_CHAMBER_STABLE: {msg_stable}")
                     return True, current_temp
             else: 
-                if self.log_message_signal: self.log_message_signal.emit("  Chamber: 현재 온도 읽기 실패. 재시도...")
+                msg_read_fail = f"{log_msg_prefix} 현재 온도 읽기 실패. 재시도..."
+                self.log_message_signal.emit(msg_read_fail)
+                print(f"DEBUG_CHAMBER_STABLE: {msg_read_fail}")
             
             sleep_interval = 1.0 
             time_left = timeout_sec - (time.time() - start_time)
             actual_sleep = min(sleep_interval, max(0, time_left))
             if actual_sleep == 0 and time_left > 0: 
                 actual_sleep = time_left
+            print(f"DEBUG_CHAMBER_STABLE: Sleeping for {actual_sleep:.2f}s (Time left: {time_left:.2f}s)")
 
             if actual_sleep > 0:
                  time.sleep(actual_sleep)
-            # 루프 시작에서 중단 플래그를 확인하므로 여기서 중복 확인 불필요
-            # if self.stop_flag_ref and self.stop_flag_ref.request_stop_flag: continue 
 
-        if self.log_message_signal: self.log_message_signal.emit(f"Chamber: 온도 안정화 시간 초과 (목표: {target_temp}°C, 최종: {last_measured_temp if last_measured_temp is not None else 'N/A'}°C, 제한시간: {timeout_sec}초).")
+        msg_timeout = f"{log_msg_prefix} 온도 안정화 시간 초과 (목표: {target_temp}°C, 최종: {last_measured_temp if last_measured_temp is not None else 'N/A'}°C, 제한시간: {timeout_sec}초)."
+        self.log_message_signal.emit(msg_timeout)
+        print(f"DEBUG_CHAMBER_STABLE: {msg_timeout}")
         return False, last_measured_temp

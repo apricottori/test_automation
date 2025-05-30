@@ -24,8 +24,10 @@ class SequenceActionType(Enum):
     SMU_MEASURE_VOLTAGE = "SM_MEAS_V"
     SMU_MEASURE_CURRENT = "SM_MEAS_I"
     SMU_ENABLE_OUTPUT = "SM_EN_OUT"
+    SMU_OUTPUT_CONTROL = "SM_OUT_CTRL"
     SMU_SET_TERMINAL = "SM_SET_TERM"
     SMU_SET_PROTECTION_CURRENT = "SM_SET_PROT_I"
+    SMU_CONFIGURE_VSOURCE_AND_ENABLE = "SM_CONF_VSRC_EN"
     # Chamber Actions
     CHAMBER_SET_TEMPERATURE = "CH_SET_TEMP"
     CHAMBER_CHECK_TEMPERATURE_STABLE = "CH_CHECK_TEMP"
@@ -57,6 +59,11 @@ TERMINAL_REAR: str = TerminalType.REAR.value
 # UI 표시용 불리언 문자열 상수 (ActionInputPanel에서 사용될 수 있음)
 BOOL_TRUE: str = "TRUE"
 BOOL_FALSE: str = "FALSE"
+
+# SMU Output 상태 정의
+SMU_OUTPUT_STATE_ENABLE: str = "ENABLE"
+SMU_OUTPUT_STATE_DISABLE: str = "DISABLE"
+SMU_OUTPUT_STATE_VSOURCE: str = "V-SOURCE" # Voltage Source & Enable
 
 class ErrorCode(Enum):
     HEX_BITS_ERROR = "0xERR_BITS"
@@ -162,6 +169,7 @@ SEQ_INPUT_OUTPUT_STATE_LABEL: str = "Output State:"
 SEQ_INPUT_TIMEOUT_LABEL: str = "Timeout (sec, optional):"
 SEQ_INPUT_TOLERANCE_LABEL: str = "Tolerance (°C, optional):"
 SEQ_INPUT_CURRENT_LIMIT_LABEL: str = "Current Limit (A):"
+SEQ_INPUT_SET_VALUE_LABEL: str = "Set Value (Numeric):"
 
 # ActionInputPanel의 QComboBox에 표시될 문자열 상수들
 ACTION_I2C_WRITE_NAME: str = "I2C Write (Name)"
@@ -174,13 +182,14 @@ ACTION_MM_MEAS_V: str = "DMM Measure Voltage"
 ACTION_MM_MEAS_I: str = "DMM Measure Current"
 ACTION_MM_SET_TERMINAL: str = "DMM Set Terminal"
 
-ACTION_SM_SET_V: str = "SMU Set Voltage"
-ACTION_SM_SET_I: str = "SMU Set Current"
+ACTION_SM_SET_V: str = "SMU Set Output Voltage Level"
+ACTION_SM_SET_I: str = "SMU Set Current Level"
 ACTION_SM_MEAS_V: str = "SMU Measure Voltage"
 ACTION_SM_MEAS_I: str = "SMU Measure Current"
-ACTION_SM_ENABLE_OUTPUT: str = "SMU Enable Output"
+ACTION_SM_OUTPUT_CONTROL: str = "SMU Output Control"
 ACTION_SM_SET_TERMINAL: str = "SMU Set Terminal"
 ACTION_SM_SET_PROTECTION_I: str = "SMU Set Protection Current"
+ACTION_SM_CONFIGURE_VSOURCE_AND_ENABLE: str = "SMU Configure V-Source and Enable"
 
 ACTION_CHAMBER_SET_TEMP: str = "Chamber Set Temperature"
 ACTION_CHAMBER_CHECK_TEMP: str = "Chamber Wait for Temperature"
@@ -195,9 +204,12 @@ DMM_ACTIONS_LIST: list[str] = [
     ACTION_MM_MEAS_V, ACTION_MM_MEAS_I, ACTION_MM_SET_TERMINAL
 ]
 SMU_ACTIONS_LIST: list[str] = [
-    ACTION_SM_SET_V, ACTION_SM_SET_I,
-    ACTION_SM_MEAS_V, ACTION_SM_MEAS_I,
-    ACTION_SM_ENABLE_OUTPUT, ACTION_SM_SET_TERMINAL,
+    ACTION_SM_SET_V, 
+    ACTION_SM_SET_I,
+    ACTION_SM_OUTPUT_CONTROL,
+    ACTION_SM_MEAS_V, 
+    ACTION_SM_MEAS_I,
+    ACTION_SM_SET_TERMINAL,
     ACTION_SM_SET_PROTECTION_I
 ]
 TEMP_ACTIONS_LIST: list[str] = [
@@ -340,8 +352,10 @@ SEQ_PREFIX_SM_SET_I: str = SequenceActionType.SMU_SET_CURRENT.value
 SEQ_PREFIX_SM_MEAS_V: str = SequenceActionType.SMU_MEASURE_VOLTAGE.value
 SEQ_PREFIX_SM_MEAS_I: str = SequenceActionType.SMU_MEASURE_CURRENT.value
 SEQ_PREFIX_SM_ENABLE_OUTPUT: str = SequenceActionType.SMU_ENABLE_OUTPUT.value
+SEQ_PREFIX_SM_OUTPUT_CONTROL: str = SequenceActionType.SMU_OUTPUT_CONTROL.value
 SEQ_PREFIX_SM_SET_TERMINAL: str = SequenceActionType.SMU_SET_TERMINAL.value
 SEQ_PREFIX_SM_SET_PROTECTION_I: str = SequenceActionType.SMU_SET_PROTECTION_CURRENT.value
+SEQ_PREFIX_SM_CONFIGURE_VSOURCE_AND_ENABLE: str = SequenceActionType.SMU_CONFIGURE_VSOURCE_AND_ENABLE.value
 SEQ_PREFIX_CHAMBER_SET_TEMP: str = SequenceActionType.CHAMBER_SET_TEMPERATURE.value
 SEQ_PREFIX_CHAMBER_CHECK_TEMP: str = SequenceActionType.CHAMBER_CHECK_TEMPERATURE_STABLE.value
 

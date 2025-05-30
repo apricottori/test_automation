@@ -1,11 +1,11 @@
 {
     "chip_id": "0x18",
     "multimeter_use": true,
-    "multimeter_serial": "GPIB0::22::INSTR",
+    "multimeter_serial": "01209782",
     "sourcemeter_use": false,
-    "sourcemeter_serial": "GPIB0::24::INSTR",
-    "chamber_use": false,
-    "chamber_serial": "",
+    "sourcemeter_serial": "01211918",
+    "chamber_use": true,
+    "chamber_serial": "01211918",
     "last_json_path": "/Users/hlee2/Documents/Henry_Mac/Python/anto/ATE_v0/P24X_regmap.json",
     "excel_export_sheets_config": [
         {

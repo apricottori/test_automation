@@ -1,0 +1,67 @@
+{
+  "name": "temp_testa",
+  "saved_at": "2025-05-30T14:03:49.866862",
+  "sequence_items": [
+    {
+      "action_type": "I2C_W_NAME",
+      "display_name": "I2C_W_NAME: NAME=SW_RESET; VAL=0x01",
+      "item_id": "action_1748580811.653999",
+      "parameters": {
+        "NAME": "SW_RESET",
+        "VAL": "0x01"
+      }
+    },
+    {
+      "action_type": "I2C_W_NAME",
+      "display_name": "I2C_W_NAME: NAME=SW_RESET; VAL=0x00",
+      "item_id": "action_1748580819.173502",
+      "parameters": {
+        "NAME": "SW_RESET",
+        "VAL": "0x00"
+      }
+    },
+    {
+      "action_type": "CH_SET_TEMP",
+      "display_name": "CH_SET_TEMP: VAL=50",
+      "item_id": "action_1748580942.518414",
+      "parameters": {
+        "VAL": "50"
+      }
+    },
+    {
+      "action_type": "CH_CHECK_TEMP",
+      "display_name": "CH_CHECK_TEMP: VAL=50; TOLERANCE_DEG=1; TIMEOUT_SEC=300",
+      "item_id": "action_1748581195.776191",
+      "parameters": {
+        "TIMEOUT_SEC": "300",
+        "TOLERANCE_DEG": "1",
+        "VAL": "50"
+      }
+    },
+    {
+      "action_type": "CH_SET_TEMP",
+      "display_name": "CH_SET_TEMP: VAL=60",
+      "item_id": "action_1748580945.009833",
+      "parameters": {
+        "VAL": "60"
+      }
+    },
+    {
+      "action_type": "CH_SET_TEMP",
+      "display_name": "CH_SET_TEMP: VAL=70",
+      "item_id": "action_1748580947.715823",
+      "parameters": {
+        "VAL": "70"
+      }
+    },
+    {
+      "action_type": "I2C_R_NAME",
+      "display_name": "I2C_R_NAME: NAME=SW_RESET; VAR=test",
+      "item_id": "action_1748580978.312162",
+      "parameters": {
+        "NAME": "SW_RESET",
+        "VAR": "test"
+      }
+    }
+  ]
+}
