@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QTextEdit, QPushButton, QSplitter, QMessageBox, QApplication, QStyle,
     QInputDialog, QDialog, QStyledItemDelegate, QStyleOptionViewItem,
-    QTreeWidget, QTreeWidgetItem, QMenu, QAbstractItemView
+    QTreeWidget, QTreeWidgetItem, QMenu, QAbstractItemView, QFileDialog
 )
 from PyQt5.QtCore import Qt, QSize, QStringListModel, QThread, pyqtSignal, pyqtSlot, QStandardPaths, QModelIndex, QMimeData, QPoint, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPainter, QDragEnterEvent, QDragMoveEvent, QDropEvent
@@ -70,6 +70,7 @@ class SequenceControllerTab(QWidget):
             self.remove_from_seq_button: Optional[QPushButton] = None
             self.clear_seq_button: Optional[QPushButton] = None
             self.execution_log_textedit: Optional[QTextEdit] = None
+            self.export_log_button: Optional[QPushButton] = None
 
             # 의존성 주입
             self.register_map = register_map_instance
@@ -249,7 +250,7 @@ class SequenceControllerTab(QWidget):
             target_layout.addWidget(splitter)
             self._main_splitter = splitter 
             print(f"DEBUG_SCT: _setup_main_layout - QSplitter created and added successfully. self._main_splitter: {self._main_splitter}, Parent: {self._main_splitter.parent()}")
-            
+
         except Exception as e:
             print(f"CRITICAL_ERROR_SCT: Exception during QSplitter setup in _setup_main_layout: {e}")
             import traceback
@@ -409,11 +410,23 @@ class SequenceControllerTab(QWidget):
 
             exec_log_label = QLabel(constants.SEQ_LOG_LABEL, right_panel_widget)
             right_panel_layout.addWidget(exec_log_label)
+
+            # --- 로그 + Export 버튼을 한 row에 배치 ---
+            log_row = QHBoxLayout()
             self.execution_log_textedit = QTextEdit(right_panel_widget)
             self.execution_log_textedit.setReadOnly(True)
             self.execution_log_textedit.setFont(QFont(font_monospace_name, log_font_size))
-            self.execution_log_textedit.setLineWrapMode(QTextEdit.NoWrap) 
-            right_panel_layout.addWidget(self.execution_log_textedit)
+            self.execution_log_textedit.setLineWrapMode(QTextEdit.NoWrap)
+            log_row.addWidget(self.execution_log_textedit, 1)  # log 창이 확장
+            log_row.addStretch()  # 로그창과 버튼 사이에 여백을 만듦
+            self.export_log_button = QPushButton("Export Log", right_panel_widget)
+            self.export_log_button.setFixedHeight(22)
+            self.export_log_button.setFixedWidth(70)
+            self.export_log_button.setStyleSheet("font-size: 10pt; padding: 2px 8px; margin-left: 8px;")
+            self.export_log_button.clicked.connect(self._export_log_to_txt)
+            log_row.addWidget(self.export_log_button)
+            right_panel_layout.addLayout(log_row)
+            # --- 끝 ---
             
             splitter_arg.addWidget(right_panel_widget) 
         except Exception as e:
@@ -618,18 +631,17 @@ class SequenceControllerTab(QWidget):
         for i in range(parent_item.childCount()):
             child_item = parent_item.child(i)
             item_data = child_item.data(0, Qt.UserRole) # 저장된 SequenceItem 딕셔너리 가져오기
-            if isinstance(item_data, dict):
+            if item_data is None:
+                # 폴더(시퀀스 제목) 노드: 자식들을 재귀적으로 모두 추가
+                items_data.extend(self._get_sequence_data_from_tree(child_item))
+            elif isinstance(item_data, dict):
                 # LoopActionItem의 경우, looped_actions도 재귀적으로 추출
                 if item_data.get("action_type") == "Loop":
-                    # Ensure all loop parameters are preserved or reconstructed if necessary
-                    # from the dialog or its representation in the tree item's data.
-                    # The current item_data should already be the full LoopActionItem.
-                    # We just need to recursively get its children for `looped_actions`.
-                    current_loop_data = cast(LoopActionItem, item_data.copy()) # Make a copy to modify
+                    current_loop_data = item_data.copy() # Make a copy to modify
                     current_loop_data["looped_actions"] = self._get_sequence_data_from_tree(child_item)
                     items_data.append(current_loop_data)
                 else:
-                    items_data.append(cast(SimpleActionItem, item_data)) # type: ignore
+                    items_data.append(item_data)
         return items_data
 
     @pyqtSlot()
@@ -1120,3 +1132,20 @@ class SequenceControllerTab(QWidget):
                 self.update_action_button.setEnabled(True)
                 return
         self.update_action_button.setEnabled(False)
+
+    def _export_log_to_txt(self):
+        log_text = self.execution_log_textedit.toPlainText() if self.execution_log_textedit else ""
+        if not log_text.strip():
+            QMessageBox.information(self, "Export Log", "로그에 내보낼 내용이 없습니다.")
+            return
+        import os, datetime
+        logs_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = os.path.join(logs_dir, f"{now_str}_log.txt")
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(log_text)
+            QMessageBox.information(self, "Export Log", f"로그가 다음 경로에 저장되었습니다:\n{file_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export Log", f"로그 저장 중 오류 발생:\n{e}")

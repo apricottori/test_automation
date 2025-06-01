@@ -42,17 +42,21 @@ class SettingsTab(QWidget):
         self.use_multimeter_checkbox: Optional[QCheckBox] = None
         self.multimeter_serial_label: Optional[QLabel] = None
         self.multimeter_serial_input: Optional[QLineEdit] = None
+        self.multimeter_status_label: Optional[QLabel] = None
 
         self.use_sourcemeter_checkbox: Optional[QCheckBox] = None
         self.sourcemeter_serial_label: Optional[QLabel] = None
         self.sourcemeter_serial_input: Optional[QLineEdit] = None
+        self.sourcemeter_status_label: Optional[QLabel] = None
 
         self.use_chamber_checkbox: Optional[QCheckBox] = None
         self.chamber_serial_label: Optional[QLabel] = None
         self.chamber_serial_input: Optional[QLineEdit] = None
+        self.chamber_status_label: Optional[QLabel] = None
 
         self.error_halts_sequence_checkbox: Optional[QCheckBox] = None
         self.save_settings_button: Optional[QPushButton] = None
+        self.tester_name_input: Optional[QLineEdit] = None
 
         self._init_ui()
         self.load_settings()
@@ -71,7 +75,7 @@ class SettingsTab(QWidget):
         instrument_group_box = self._create_instrument_settings_group()
         main_layout.addWidget(instrument_group_box)
 
-        # 실행 옵션 그룹
+        # 실행 옵션 그룹 (테스터 이름 포함)
         execution_group_box = self._create_execution_options_group()
         main_layout.addWidget(execution_group_box)
 
@@ -124,11 +128,15 @@ class SettingsTab(QWidget):
         self.multimeter_serial_label = QLabel(constants.SETTINGS_MULTIMETER_SERIAL_LABEL, instrument_group_box)
         self.multimeter_serial_input = QLineEdit(instrument_group_box)
         self.multimeter_serial_input.setPlaceholderText("e.g., USB0::...")
+        # --- 상태 표시 라벨 추가 ---
+        self.multimeter_status_label = QLabel()
+        self._set_instrument_status_label(self.multimeter_status_label, False)
 
         layout.addWidget(self.use_multimeter_checkbox, current_row, 0, 1, 2) # 체크박스는 2열 차지
         current_row += 1
         layout.addWidget(self.multimeter_serial_label, current_row, 0)
         layout.addWidget(self.multimeter_serial_input, current_row, 1)
+        layout.addWidget(self.multimeter_status_label, current_row, 2)
         current_row += 1
 
         if self.use_multimeter_checkbox: # None 체크
@@ -140,11 +148,15 @@ class SettingsTab(QWidget):
         self.sourcemeter_serial_label = QLabel(constants.SETTINGS_SOURCEMETER_SERIAL_LABEL, instrument_group_box)
         self.sourcemeter_serial_input = QLineEdit(instrument_group_box)
         self.sourcemeter_serial_input.setPlaceholderText("e.g., GPIB0::24::INSTR")
+        # --- 상태 표시 라벨 추가 ---
+        self.sourcemeter_status_label = QLabel()
+        self._set_instrument_status_label(self.sourcemeter_status_label, False)
 
         layout.addWidget(self.use_sourcemeter_checkbox, current_row, 0, 1, 2) # 체크박스는 2열 차지
         current_row += 1
         layout.addWidget(self.sourcemeter_serial_label, current_row, 0)
         layout.addWidget(self.sourcemeter_serial_input, current_row, 1)
+        layout.addWidget(self.sourcemeter_status_label, current_row, 2)
         current_row += 1
 
         if self.use_sourcemeter_checkbox: # None 체크
@@ -156,11 +168,15 @@ class SettingsTab(QWidget):
         self.chamber_serial_label = QLabel(constants.SETTINGS_CHAMBER_SERIAL_LABEL, instrument_group_box)
         self.chamber_serial_input = QLineEdit(instrument_group_box)
         self.chamber_serial_input.setPlaceholderText("e.g., COM3 or GPIB0::1::INSTR")
+        # --- 상태 표시 라벨 추가 ---
+        self.chamber_status_label = QLabel()
+        self._set_instrument_status_label(self.chamber_status_label, False)
 
         layout.addWidget(self.use_chamber_checkbox, current_row, 0, 1, 2) # 체크박스는 2열 차지
         current_row += 1
         layout.addWidget(self.chamber_serial_label, current_row, 0)
         layout.addWidget(self.chamber_serial_input, current_row, 1)
+        layout.addWidget(self.chamber_status_label, current_row, 2)
         # current_row += 1 # 마지막 요소이므로 row 증가 불필요
 
         if self.use_chamber_checkbox: # None 체크
@@ -177,10 +193,32 @@ class SettingsTab(QWidget):
 
         return instrument_group_box
 
+    def _set_instrument_status_label(self, label: QLabel, is_connected: bool):
+        if is_connected:
+            label.setText("● Connected")
+            label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            label.setText("● Disconnected")
+            label.setStyleSheet("color: red; font-weight: bold;")
+
+    def update_instrument_status_labels(self, multimeter=None, sourcemeter=None, chamber=None):
+        # 각 장비 인스턴스의 연결 상태를 받아 상태 라벨 업데이트
+        self._set_instrument_status_label(self.multimeter_status_label, getattr(multimeter, 'is_connected', False))
+        self._set_instrument_status_label(self.sourcemeter_status_label, getattr(sourcemeter, 'is_connected', False))
+        self._set_instrument_status_label(self.chamber_status_label, getattr(chamber, 'is_connected', False))
+
     def _create_execution_options_group(self) -> QGroupBox:
         """실행 옵션 그룹 박스를 생성합니다."""
         group = QGroupBox(constants.SETTINGS_EXECUTION_GROUP_TITLE)
         layout = QFormLayout(group)
+
+        # --- 테스터 이름 입력란 추가 (여기로 이동) ---
+        tester_layout = QHBoxLayout()
+        tester_label = QLabel("Tester :")
+        self.tester_name_input = QLineEdit()
+        tester_layout.addWidget(tester_label)
+        tester_layout.addWidget(self.tester_name_input)
+        layout.addRow(tester_layout)
 
         self.error_halts_sequence_checkbox = QCheckBox(constants.SETTINGS_ERROR_HALTS_SEQUENCE_LABEL)
         layout.addRow(self.error_halts_sequence_checkbox)
@@ -191,6 +229,10 @@ class SettingsTab(QWidget):
         """UI 요소에 현재 설정을 채웁니다."""
         # SettingsManager에서 설정을 로드합니다.
         self.current_settings = self.settings_manager.load_settings()
+
+        # 테스터 이름
+        if hasattr(self, 'tester_name_input') and self.tester_name_input:
+            self.tester_name_input.setText(self.current_settings.get('tester_name', ""))
 
         # EVB 상태 그룹
         if hasattr(self, 'chip_id_input') and self.chip_id_input:
@@ -331,6 +373,10 @@ class SettingsTab(QWidget):
     def get_current_settings(self) -> Dict[str, Any]:
         # 현재 UI 상태를 기반으로 설정 딕셔너리를 반환합니다.
         temp_settings = {}
+        # 테스터 이름
+        if hasattr(self, 'tester_name_input') and self.tester_name_input:
+            temp_settings['tester_name'] = self.tester_name_input.text().strip()
+        
         if hasattr(self, 'chip_id_input') and self.chip_id_input:
             temp_settings[constants.SETTINGS_CHIP_ID_KEY] = self.chip_id_input.text().strip()
         

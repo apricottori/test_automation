@@ -38,9 +38,7 @@ class SheetConfigDialog(QDialog):
         self._populate_sheet_list()
         self._connect_signals()
         
-        # 초기 시트가 없는 경우 기본 시트 생성
-        if not self.current_config:
-            self._add_default_sheet()
+        # 초기 시트가 없는 경우에도 기본 시트 생성하지 않음 (사용자가 직접 추가)
         
     def _create_ui(self):
         main_layout = QVBoxLayout(self)
@@ -87,8 +85,8 @@ class SheetConfigDialog(QDialog):
         self.transpose_checkbox = QCheckBox("행/열 전치")
         config_layout.addWidget(self.transpose_checkbox, 3, 0, 1, 2)
         
-        # 테스트 항목 선택 (Variable Name 값들)
-        config_layout.addWidget(QLabel("포함할 테스트 항목:"), 4, 0)
+        # 테스트 항목 선택 (Test item 값들)
+        config_layout.addWidget(QLabel("포함할 Test item:"), 4, 0)
         self.test_items_list = QListWidget()
         self.test_items_list.setSelectionMode(QListWidget.MultiSelection)
         config_layout.addWidget(self.test_items_list, 5, 0, 1, 2)
@@ -135,13 +133,21 @@ class SheetConfigDialog(QDialog):
         else:
             all_columns = self.available_columns
             
-        # 사용 가능한 모든 컬럼 추가 (Value 포함)
+        # 'Timestamp'와 'Value'는 행/열 필드 선택에서 제외
+        standard_cols = {'Timestamp', 'Variable Name', 'Value', 'Sample Number'}
         for col in all_columns:
-            # Value도 행으로 사용 가능하게 함
-            self.row_field_combo.addItem(col, col)
-            self.column_field_combo.addItem(col, col)
+            if col in ('Timestamp', 'Value'):
+                continue
+            display_col = col
+            # loop 변수로 추정되는 컬럼이면 표시 변경
+            if col not in standard_cols:
+                display_col = f"loop : {col}"
+            elif col == 'Variable Name':
+                display_col = 'Test item'
+            self.row_field_combo.addItem(display_col, col)
+            self.column_field_combo.addItem(display_col, col)
         
-        # 테스트 항목 목록 채우기 (Variable Name의 unique 값들)
+        # 테스트 항목 목록 채우기 (Test item의 unique 값들)
         self._populate_test_items()
         
         # 첫 번째 시트 선택
@@ -290,25 +296,6 @@ class SheetConfigDialog(QDialog):
         self.sheet_list.addItem(default_sheet_name)
         self.sheet_list.setCurrentRow(new_index)
     
-    def _add_default_sheet(self):
-        """기본 시트 추가"""
-        default_sheet_config = {
-            'sheet_name': "Data",
-            'dynamic_naming': False,
-            'dynamic_name_field': "",
-            'dynamic_name_prefix': "",
-            'index_fields': [],
-            'column_fields': [],
-            'transpose': False,
-            'include_columns': [],
-            'global_filters': None,
-            'value_filters': None
-        }
-        
-        self.current_config.append(default_sheet_config)
-        self.sheet_list.addItem(default_sheet_config['sheet_name'])
-        self.sheet_list.setCurrentRow(0)
-    
     def _delete_current_sheet(self):
         """현재 선택된 시트 삭제"""
         if self.sheet_list.count() <= 1:  # 최소한 하나의 시트는 유지
@@ -417,21 +404,17 @@ class ResultsViewerTab(QWidget):
         print("ResultsViewerTab: clear_results_requested_signal emitted.")
 
     def _on_export_settings_button_clicked(self):
-        """시트 설정 다이얼로그 표시"""
+        """시트 설정 다이얼로그 표시 (Raw Data 시트는 제외)"""
         parent_window = self.window()
         if not (parent_window and hasattr(parent_window, 'results_manager')):
             QMessageBox.critical(self, "Error", "Results manager not found or inaccessible.")
             return
-        
         results_df = parent_window.results_manager.get_results_dataframe()
         if results_df.empty:
             QMessageBox.information(self, "No Data", "There is no data to export.")
             return
-        
-        # 사용 가능한 모든 컬럼 가져오기
         available_columns = list(results_df.columns)
-        
-        # 현재 설정 가져오기
+        # Raw Data 시트는 config dialog에서 제외
         dialog = SheetConfigDialog(available_columns, self.excel_sheets_config, self)
         if dialog.exec_() == QDialog.Accepted:
             self.excel_sheets_config = dialog.result_config
@@ -439,123 +422,35 @@ class ResultsViewerTab(QWidget):
             QMessageBox.information(self, "설정 완료", "Excel 시트 설정이 업데이트되었습니다.")
 
     def _on_export_button_clicked(self):
+        """엑셀로 내보내기 (Raw Data 시트는 내보내지 않음)"""
         parent_window = self.window()
         if not (parent_window and hasattr(parent_window, 'results_manager')):
             QMessageBox.critical(self, "Error", "Results manager not found or inaccessible.")
             return
-
         results_df = parent_window.results_manager.get_results_dataframe()
         if results_df.empty:
             QMessageBox.information(self, "No Data", "There is no data to export.")
             return
-        
-        # 설정이 없으면 기본 설정 적용
-        if not self.excel_sheets_config:
-            self.set_excel_export_config([])
-        
-        options = QFileDialog.Options()
-        
-        # 현재 작업 디렉토리를 기본 경로로 사용
-        current_dir = os.getcwd()
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Excel File", current_dir, 
-            "Excel Files (*.xlsx);;All Files (*)", options=options
-        )
-        if file_path:
-            if not file_path.lower().endswith('.xlsx'):
-                file_path += '.xlsx'
-            
-            # Timestamp 컬럼 제거
-            filtered_df = results_df.copy()
-            if 'Timestamp' in filtered_df.columns:
-                filtered_df = filtered_df.drop(columns=['Timestamp'])
-            
-            # Raw Data 시트(첫 번째 시트)를 제외한 시트 구성만 사용
-            export_configs = self.excel_sheets_config[1:] if len(self.excel_sheets_config) > 1 else []
-            
-            # 직접 ExcelExporter 사용
-            exporter = ExcelExporter(filtered_df)
-            if exporter.export_to_excel(file_path, export_configs):
-                QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, f"Results exported to '{file_path}'.")
-            else:
-                QMessageBox.warning(self, constants.MSG_TITLE_ERROR, "Failed to export Excel file. Check logs.")
-
-    def set_excel_export_config(self, config_list_from_settings: List[Dict[str, Any]]):
-        # 기본 Excel 시트 설정을 생성
-        self.excel_sheets_config = []
-        
-        # 기본 Raw Data 시트 설정 추가
-        default_sheet_config: ExcelSheetConfig = {
-            'sheet_name': "Raw Data",
-            'dynamic_naming': False,
-            'dynamic_name_field': "",
-            'dynamic_name_prefix': "",
-            'index_fields': [],
-            'column_fields': [],
-            'transpose': False,
-            'include_columns': [],  # 모든 열 포함
-            'global_filters': None,
-            'value_filters': None
-        }
-        self.excel_sheets_config.append(default_sheet_config)
-        
-        # 설정에서 가져온 시트 구성이 있으면 사용
-        if isinstance(config_list_from_settings, list) and config_list_from_settings:
-            # 기존 시트 설정을 새 형식으로 변환하여 추가
-            for i, cfg_data in enumerate(config_list_from_settings):
-                if isinstance(cfg_data, dict):
-                    # 모든 필수 키를 가진 기본 설정 생성
-                    default_minimal_config = {
-                        'sheet_name': f"Sheet{i+1}",
-                        'dynamic_naming': False,
-                        'dynamic_name_field': "", 
-                        'dynamic_name_prefix': "",
-                        'index_fields': [],
-                        'column_fields': [],
-                        'transpose': False,
-                        'include_columns': [],
-                        'global_filters': None,
-                        'value_filters': None
-                    }
-                    
-                    # 구 형식(columns 키)에서 신 형식(include_columns 키)으로 변환
-                    if 'columns' in cfg_data and isinstance(cfg_data['columns'], list):
-                        # "Variable Name"과 "Value" 열은 항상 필요함
-                        # "Timestamp", "Sample Number" 등은 선택적 표시 항목
-                        # "Variable Name" 열의 값들(측정 항목 이름)이 include_columns에 들어감
-                        columns_without_timestamp = [col for col in cfg_data['columns'] if col != "Timestamp"]
-                        
-                        if 'Variable Name' in columns_without_timestamp and 'Value' in columns_without_timestamp:
-                            # 시트 이름은 그대로 유지
-                            default_minimal_config['sheet_name'] = cfg_data.get('sheet_name', f"Sheet{i+1}")
-                            
-                            # columns에서 "Variable Name"을 제외한 항목들을 index_fields로 사용
-                            # (대개 "Sample Number"나 루프 변수들이 여기에 해당)
-                            index_candidates = [col for col in columns_without_timestamp if col not in ('Variable Name', 'Value')]
-                            if index_candidates:
-                                # 첫 번째 항목을 index_fields로 사용
-                                default_minimal_config['index_fields'] = [index_candidates[0]]
-                            
-                            # include_columns는 비워두어 모든 측정 항목 포함
-                            default_minimal_config['include_columns'] = []
-                        else:
-                            # "Variable Name"이나 "Value"가 없으면 그냥 모든 columns를 include_columns로 처리
-                            default_minimal_config['include_columns'] = columns_without_timestamp
-                    
-                    # 설정 병합 (cfg_data의 값이 default_minimal_config를 덮어씀)
-                    validated_cfg = {**default_minimal_config, **cfg_data}
-                    
-                    # 만약 include_columns와 columns가 모두 있다면 include_columns 우선
-                    if 'columns' in validated_cfg and 'include_columns' not in cfg_data:
-                        validated_cfg.pop('columns')  # 이전 형식의 'columns' 키 제거
-                    
-                    self.excel_sheets_config.append(validated_cfg)
-                else:
-                    print(f"Warning: Invalid item type in loaded excel_sheets_config at index {i}")
-
-        print(f"ResultsViewerTab: Excel export config initialized/set with {len(self.excel_sheets_config)} sheet(s).")
-        self._update_sheet_previews()
+        # Timestamp 컬럼 제외
+        filtered_df = results_df.copy()
+        if 'Timestamp' in filtered_df.columns:
+            filtered_df = filtered_df.drop(columns=['Timestamp'])
+        # 내보낼 시트 설정 (Raw Data 시트는 이미 제외되어 있음)
+        export_configs = self.excel_sheets_config
+        if not export_configs:
+            QMessageBox.warning(self, "Error", "No exportable sheet is configured.")
+            return
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Results to Excel", "", "Excel Files (*.xlsx);;All Files (*)")
+        if not file_path:
+            return
+        if not file_path.lower().endswith('.xlsx'):
+            file_path += '.xlsx'
+        # 직접 ExcelExporter 사용
+        exporter = ExcelExporter(filtered_df)
+        if exporter.export_to_excel(file_path, export_configs):
+            QMessageBox.information(self, constants.MSG_TITLE_SUCCESS, f"Results exported to '{file_path}'.")
+        else:
+            QMessageBox.warning(self, constants.MSG_TITLE_ERROR, "Failed to export Excel file. Check logs.")
 
     def populate_table(self, results_df: Optional[pd.DataFrame]):
         if self.raw_data_table is None: return
@@ -620,51 +515,37 @@ class ResultsViewerTab(QWidget):
         # 성능을 위해 미리보기로 생성할 최대 시트 수 제한
         MAX_PREVIEW_SHEETS = 5
         
-        # Raw Data 이후의 모든 시트에 대한 미리보기 생성
-        if len(self.excel_sheets_config) > 1:
-            # Timestamp 컬럼 제외
+        # 모든 시트에 대한 미리보기 생성 (Raw Data 제외, 실제 시트 개수만큼)
+        if self.excel_sheets_config:
             filtered_df = full_results_df.copy()
             if 'Timestamp' in filtered_df.columns:
                 filtered_df = filtered_df.drop(columns=['Timestamp'])
 
             exporter = ExcelExporter(filtered_df)
-            
-            # 추가 시트 미리보기 생성 (최대 MAX_PREVIEW_SHEETS개)
             preview_count = 0
-            for config in self.excel_sheets_config[1:]:  # Raw Data 다음부터 모든 시트
+            for config in self.excel_sheets_config:
                 if preview_count >= MAX_PREVIEW_SHEETS:
                     break
-                    
                 sheet_name = config.get('sheet_name', 'Preview')
-                
                 try:
-                    # 피벗 테이블 생성 로직은 ExcelExporter._prepare_sheet_data에 위임
-                    # 필터링, 피벗팅, 열 순서 조정 등이 일관되게 적용됨
                     preview_df = exporter._prepare_sheet_data(filtered_df, config)
-                    
                     if not preview_df.empty:
                         preview_table = QTableWidget()
                         preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
                         preview_table.setAlternatingRowColors(True)
                         preview_table.setFont(self.raw_data_table.font() if self.raw_data_table else QFont())
                         preview_table.verticalHeader().setVisible(False)
-                        
-                        # 테이블에 데이터 채우기
                         preview_table.setColumnCount(len(preview_df.columns))
                         preview_table.setHorizontalHeaderLabels([str(col) for col in preview_df.columns])
                         preview_table.setRowCount(len(preview_df))
-                        
-                        # 인덱스가 있는 경우(피벗 테이블) 인덱스도 표시
                         has_index = not preview_df.index.equals(pd.RangeIndex(len(preview_df)))
                         if has_index:
                             preview_table.setVerticalHeaderLabels([str(idx) for idx in preview_df.index])
                             preview_table.verticalHeader().setVisible(True)
-                        
                         for r_idx, r_data in enumerate(preview_df.itertuples(index=False)):
                             for c_idx, value in enumerate(r_data):
                                 item_value_str = "" if pd.isna(value) else str(value)
                                 preview_table.setItem(r_idx, c_idx, QTableWidgetItem(item_value_str))
-                        
                         preview_table.resizeColumnsToContents()
                         self.preview_tab_widget.addTab(preview_table, sheet_name)
                         preview_count += 1
@@ -672,5 +553,4 @@ class ResultsViewerTab(QWidget):
                     print(f"Error generating preview for sheet '{sheet_name}': {e}")
                     import traceback
                     traceback.print_exc()
-                
         print(f"ResultsViewerTab: Sheet preview updated. Total tabs: {self.preview_tab_widget.count()}")

@@ -441,7 +441,7 @@ class SequencePlayer(QObject):
                             else: error_msg = "Name/Value 파라미터 누락"
                         
                         elif action_type == constants.SEQ_PREFIX_I2C_READ_NAME:
-                            name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            name = modified_params.get(constants.SEQ_PARAM_KEY_TARGET_NAME); var_name = modified_params.get(constants.SEQ_PARAM_KEY_TEST_ITEM)
                             if self.register_map and name and var_name:
                                 read_val_hex = self.register_map.get_logical_field_value_hex(name, from_initial=False)
                                 if constants.HEX_ERROR_NO_FIELD in read_val_hex or constants.HEX_ERROR_CONVERSION in read_val_hex : error_msg = f"Register '{name}' 읽기 오류: {read_val_hex}"
@@ -478,7 +478,7 @@ class SequencePlayer(QObject):
                             else: error_msg = "Address/Value 파라미터 누락"
                         
                         elif action_type == constants.SEQ_PREFIX_I2C_READ_ADDR:
-                            addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS); var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            addr = modified_params.get(constants.SEQ_PARAM_KEY_ADDRESS); var_name = modified_params.get(constants.SEQ_PARAM_KEY_TEST_ITEM)
                             if self.i2c_device and self.register_map and addr and var_name:
                                 norm_addr = normalize_hex_input(addr, 4)
                                 if norm_addr is None: error_msg = f"잘못된 주소 형식: {addr}"
@@ -495,7 +495,7 @@ class SequencePlayer(QObject):
                             else: error_msg = "Address/Variable 파라미터 누락"
                         
                         elif action_type == constants.SEQ_PREFIX_MM_MEAS_V:
-                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_TEST_ITEM)
                             if self.multimeter and self.settings.get("multimeter_use") and var_name:
                                 s, v = self.multimeter.measure_voltage()
                                 if s and v is not None: self.measurement_result_signal.emit(var_name, v, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter V: {v:.6f} (Var: {var_name})"); step_success = True
@@ -504,7 +504,7 @@ class SequencePlayer(QObject):
                             elif not self.multimeter: error_msg = "Multimeter가 초기화되지 않았습니다."
                             else: error_msg = "변수명 누락"
                         elif action_type == constants.SEQ_PREFIX_MM_MEAS_I:
-                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE)
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_TEST_ITEM)
                             if self.multimeter and self.settings.get("multimeter_use") and var_name:
                                 s, curr = self.multimeter.measure_current()
                                 if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  Multimeter I: {curr:.6e} (Var: {var_name})"); step_success = True
@@ -550,7 +550,7 @@ class SequencePlayer(QObject):
                             else: error_msg = "값 파라미터 누락"
 
                         elif action_type == constants.SEQ_PREFIX_SM_MEAS_I:
-                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_VARIABLE); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
+                            var_name = modified_params.get(constants.SEQ_PARAM_KEY_TEST_ITEM); term = modified_params.get(constants.SEQ_PARAM_KEY_TERMINAL, constants.TERMINAL_FRONT)
                             if self.sourcemeter and self.settings.get("sourcemeter_use") and var_name:
                                 s, curr = self.sourcemeter.measure_current(term)
                                 if s and curr is not None: self.measurement_result_signal.emit(var_name, curr, self.sample_number, current_conditions_with_loops); self.log_message_signal.emit(f"  SM I ({term}): {curr:.4e} (Var: {var_name})"); step_success = True

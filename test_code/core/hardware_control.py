@@ -77,9 +77,44 @@ class I2CDevice:
             self.evb_instance = evb_runtime_class() 
             try:
                 if self.evb_instance: 
+                    print(f"[I2CDevice] Calling evb_instance.open()...")
                     self.evb_instance.open()
-                    self.is_opened = True
-                    print(f"Info: I2C 장치(ID: {chip_id_str} / {self.chip_id:#04X})가 성공적으로 초기화 및 연결되었습니다.")
+                    # Check for is_opened or is_connected attribute
+                    if hasattr(self.evb_instance, 'is_opened'):
+                        self.is_opened = self.evb_instance.is_opened
+                        print(f"[I2CDevice] evb_instance.is_opened: {self.evb_instance.is_opened}")
+                        if not self.is_opened:
+                            try:
+                                print(f"[I2CDevice] is_opened is False. Trying dummy i2c0_reg16_read(self.chip_id={self.chip_id}, addr=0x00)...")
+                                _ = self.evb_instance.i2c0_reg16_read(self.chip_id, 0x00)
+                                self.is_opened = True
+                                print(f"[I2CDevice] Dummy read succeeded. is_opened set to True.")
+                            except Exception as e:
+                                self.is_opened = False
+                                print(f"[I2CDevice] Dummy read failed: {e}. is_opened set to False.")
+                    elif hasattr(self.evb_instance, 'is_connected'):
+                        self.is_opened = self.evb_instance.is_connected
+                        print(f"[I2CDevice] evb_instance.is_connected: {self.evb_instance.is_connected}")
+                        if not self.is_opened:
+                            try:
+                                print(f"[I2CDevice] is_connected is False. Trying dummy i2c0_reg16_read(self.chip_id={self.chip_id}, addr=0x00)...")
+                                _ = self.evb_instance.i2c0_reg16_read(self.chip_id, 0x00)
+                                self.is_opened = True
+                                print(f"[I2CDevice] Dummy read succeeded. is_opened set to True.")
+                            except Exception as e:
+                                self.is_opened = False
+                                print(f"[I2CDevice] Dummy read failed: {e}. is_opened set to False.")
+                    else:
+                        # Try a dummy read to confirm connection
+                        try:
+                            print(f"[I2CDevice] No is_opened/is_connected. Trying dummy i2c0_reg16_read(self.chip_id={self.chip_id}, addr=0x00)...")
+                            _ = self.evb_instance.i2c0_reg16_read(self.chip_id, 0x00)
+                            self.is_opened = True
+                            print(f"[I2CDevice] Dummy read succeeded. is_opened set to True.")
+                        except Exception as e:
+                            self.is_opened = False
+                            print(f"[I2CDevice] Dummy read failed: {e}. is_opened set to False.")
+                    print(f"[I2CDevice] Final is_opened: {self.is_opened}")
             except Exception as open_e: 
                 self.is_opened = False
                 print(f"Error: I2C EVB 연결(open) 중 오류 발생: {open_e}. 다른 프로그램이 장치를 사용 중이거나 권한 문제가 있을 수 있습니다.")
@@ -439,12 +474,15 @@ class Multimeter(GPIBDevice):
 
         print(f"DEBUG_DMM_ST: Sending GPIB command: '{cmd}' to DMM")
         if self.gpib_write(cmd):
-            # As per your snippet, *WAI is used. It ensures the command completes.
-            # However, some drivers might handle this internally or it might interfere.
-            # Let's include it as it was in your reference.
             self.gpib_write("*WAI") 
-            if terminal_type_str.upper() == constants.TERMINAL_REAR: # Use constants.TERMINAL_REAR.upper()
-                 time.sleep(1) # Specific delay for REAR as per your snippet
+            if terminal_type_str.upper() == constants.TERMINAL_REAR:
+                 time.sleep(1)
+            # Always disable beep after terminal change
+            try:
+                self.gpib_write("SYST:BEEP:STAT OFF")
+                print("INFO: DMM beep disabled after terminal change (SYST:BEEP:STAT OFF sent)")
+            except Exception as e:
+                print(f"Warning: Failed to disable DMM beep after terminal change: {e}")
             print(f"DEBUG_DMM_ST: DMM Terminal set to {terminal_type_str.upper()} successfully.")
             return True
         else:

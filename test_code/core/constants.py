@@ -37,7 +37,7 @@ class SequenceParameterKey(Enum):
     TARGET_NAME = "NAME"
     ADDRESS = "ADDR"
     VALUE = "VAL"
-    VARIABLE_NAME = "VAR"
+    VARIABLE_NAME = "TEST_ITEM"
     TERMINAL = "TERM"
     STATE = "STATE"
     SECONDS = "SEC"
@@ -377,3 +377,4 @@ SEQ_PARAM_KEY_LOOP_TARGET_PARAM_KEY: str = SequenceParameterKey.LOOP_TARGET_PARA
 SEQ_PARAM_KEY_LOOP_START_VALUE: str = SequenceParameterKey.LOOP_START_VALUE.value
 SEQ_PARAM_KEY_LOOP_STEP_VALUE: str = SequenceParameterKey.LOOP_STEP_VALUE.value
 SEQ_PARAM_KEY_LOOP_END_VALUE: str = SequenceParameterKey.LOOP_END_VALUE.value
+SEQ_PARAM_KEY_TEST_ITEM: str = SequenceParameterKey.VARIABLE_NAME.value

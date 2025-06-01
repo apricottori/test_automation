@@ -338,9 +338,6 @@ class ActionInputPanel(QWidget):
         hold_widget.setLayout(hold_layout)
         self.i2c_params_stack.addWidget(hold_widget)
 
-        # 콤보박스 인덱스 매핑에 Hold 추가
-        self.i2c_action_combo.addItem(constants.ACTION_HOLD)
-
     def _create_dmm_sub_tab(self):
         """DMM 액션 입력을 위한 UI를 생성합니다."""
         tab = QWidget(); self.dmm_tab_widget = tab

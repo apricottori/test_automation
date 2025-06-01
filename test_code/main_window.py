@@ -429,7 +429,15 @@ class RegMapWindow(QMainWindow):
                  message_detail = f"Attempted ID from settings: {self.current_settings.get(constants.SETTINGS_CHIP_ID_KEY)}"
              
              self.tab_settings_widget.update_evb_status(self.i2c_device is not None and self.i2c_device.is_opened, message_detail)
-        print("DEBUG: Hardware initialization from settings completed.")
+             # --- GPIB 장비 상태 라벨 업데이트 ---
+             if hasattr(self.tab_settings_widget, 'update_instrument_status_labels'):
+                 self.tab_settings_widget.update_instrument_status_labels(self.multimeter, self.sourcemeter, self.chamber)
+
+        if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
+            self.tab_sequence_controller_widget.update_hardware_instances(
+                self.i2c_device, self.multimeter, self.sourcemeter, self.chamber
+            )
+        if self.statusBar(): self.statusBar().showMessage("EVB 연결 상태 확인 완료.", 3000)
 
     def _create_file_selection_area(self):
         """JSON 파일 선택 및 샘플 번호 입력 UI를 생성하고 멤버 변수에 할당합니다."""
@@ -662,13 +670,16 @@ class RegMapWindow(QMainWindow):
                 status_reason = "연결 실패"
                 if not attempted_chip_id_for_msg or attempted_chip_id_for_msg == "N/A":
                     status_reason = "Chip ID 없음"
-                elif self.i2c_device is None and chip_id_str_to_use: # _init_i2c_device에서 ID는 있었으나 인스턴스 생성 실패
+                elif self.i2c_device is None and attempted_chip_id_for_msg:
                     status_reason = "초기화 실패"
 
                 message_detail = f"Attempted ID: {attempted_chip_id_for_msg} ({status_reason})"
             
             is_actually_connected = self.i2c_device is not None and self.i2c_device.is_opened
             self.tab_settings_widget.update_evb_status(is_actually_connected, message_detail)
+            # --- GPIB 장비 상태 라벨 업데이트 ---
+            if hasattr(self.tab_settings_widget, 'update_instrument_status_labels'):
+                self.tab_settings_widget.update_instrument_status_labels(self.multimeter, self.sourcemeter, self.chamber)
             print(f"DEBUG_MW: Sent to SettingsTab.update_evb_status: connected={is_actually_connected}, msg='{message_detail}'")
 
         if self.tab_sequence_controller_widget and hasattr(self.tab_sequence_controller_widget, 'update_hardware_instances'):
