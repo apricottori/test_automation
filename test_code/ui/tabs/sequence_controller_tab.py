@@ -281,7 +281,13 @@ class SequenceControllerTab(QWidget):
             action_buttons_layout.addWidget(self.add_to_seq_button)
 
             self.define_loop_button = QPushButton(constants.DEFINE_LOOP_BUTTON_TEXT, left_panel_widget)
-            self.define_loop_button.setIcon(QApplication.style().standardIcon(QStyle.SP_DialogYesButton))
+            # Try to set a more loop-like icon (repeat/refresh)
+            try:
+                loop_icon = QApplication.style().standardIcon(QStyle.SP_BrowserReload)
+                self.define_loop_button.setIcon(loop_icon)
+                self.define_loop_button.setIconSize(QSize(18, 18))
+            except Exception as e_icon:
+                print(f"Warning_SCT: Icon for define_loop_button: {e_icon}")
             action_buttons_layout.addWidget(self.define_loop_button)
 
             # "Update Action" 버튼 추가
@@ -443,7 +449,7 @@ class SequenceControllerTab(QWidget):
         else: print("Error_SCT: remove_from_seq_button is None, cannot connect.")
         
         if self.saved_sequence_panel:
-            self.saved_sequence_panel.load_sequence_to_editor_requested.connect(self._add_items_to_tree)
+            self.saved_sequence_panel.load_sequence_to_editor_requested.connect(self._handle_load_saved_sequence)
             self.saved_sequence_panel.save_current_sequence_as_requested.connect(self._handle_save_current_sequence_as)
         else: print("Error_SCT: saved_sequence_panel is None, cannot connect its signals.")
 
@@ -452,6 +458,7 @@ class SequenceControllerTab(QWidget):
             # self.sequence_list_widget.currentItemChanged.connect(self._handle_edit_action_item) # <-- 이 줄을 주석 처리 또는 삭제
             self.sequence_list_widget.itemDoubleClicked.connect(self._handle_edit_action_item) # 더블 클릭 시 편집 핸들러 연결
             # itemSelectionChanged는 이미 _update_loop_variables_for_panel_on_selection에 연결되어 있음 (유지)
+            self.sequence_list_widget.itemSelectionChanged.connect(self._on_tree_selection_changed)
 
     @pyqtSlot()
     def _add_item_from_action_panel(self):
@@ -502,13 +509,23 @@ class SequenceControllerTab(QWidget):
         if loop_dialog.exec_() == QDialog.Accepted:
             new_loop_data = loop_dialog.get_loop_parameters()
             if new_loop_data:
+                loop_var = new_loop_data.get("loop_variable_name")
+                display_name = new_loop_data.get("display_name", "")
+                if display_name:
+                    loop_title = f"{display_name} : {loop_var}" if loop_var else display_name
+                else:
+                    loop_title = f"Loop : {loop_var}" if loop_var else "Loop"
                 new_loop_item = QTreeWidgetItem()
-                new_loop_item.setText(0, new_loop_data.get("display_name", "Loop"))
+                new_loop_item.setText(0, loop_title)
                 new_loop_item.setData(0, Qt.UserRole, new_loop_data)
 
                 if target_parent_item:
-                    target_parent_item.addChild(new_loop_item)
-                    target_parent_item.setExpanded(True)
+                    if self._is_parent_allowed_for_child(target_parent_item):
+                        target_parent_item.addChild(new_loop_item)
+                        target_parent_item.setExpanded(True)
+                    else:
+                        QMessageBox.warning(self, "추가 불가", "Loop/폴더 노드에만 자식 항목을 추가할 수 있습니다.")
+                        return
                 else:
                     self.sequence_list_widget.addTopLevelItem(new_loop_item)
 
@@ -522,25 +539,55 @@ class SequenceControllerTab(QWidget):
         self._add_new_loop_block_action(target_parent_item=None, insert_after_item=None)
         return 
 
-    def _add_items_to_tree(self, sequence_items: List[SequenceItem], parent_tree_item: Optional[QTreeWidgetItem] = None):
+    def _add_items_to_tree(self, sequence_items: List[SequenceItem], parent_tree_item: Optional[QTreeWidgetItem] = None, sequence_display_name: Optional[str] = None):
         """ SequenceItem 리스트를 QTreeWidget에 아이템으로 추가 (재귀적) """
         if not self.sequence_list_widget: return
-        
+
+        # --- 새 기능: 최상위에 불러올 때는 폴더 아이콘과 제목 노드 추가 ---
+        if sequence_display_name is not None:
+            # 폴더 아이콘이 있는 노드 생성 (항상 parent_tree_item 아래에 추가)
+            parent = parent_tree_item if parent_tree_item else self.sequence_list_widget
+            parent_item = QTreeWidgetItem(parent)
+            parent_item.setText(0, sequence_display_name)
+            parent_item.setFlags(parent_item.flags() & ~Qt.ItemIsDropEnabled) # 폴더 노드는 드롭 비허용(선택적)
+            try:
+                app = QApplication.instance()
+                if app:
+                    folder_icon = app.style().standardIcon(QStyle.SP_DirIcon)
+                    parent_item.setIcon(0, folder_icon)
+            except Exception as e:
+                print(f"Warning: Could not set folder icon: {e}")
+            parent_item.setExpanded(True)
+            for item_data in sequence_items:
+                self._add_items_to_tree([item_data], parent_tree_item=parent_item)
+            self._update_loop_variables_for_action_panel(self.sequence_list_widget.currentItem())
+            return
         target_widget = parent_tree_item if parent_tree_item else self.sequence_list_widget
-
         for item_data in sequence_items:
-            item_display_name = item_data.get("display_name", item_data.get("action_type", "Unknown Action"))
-            tree_item = QTreeWidgetItem(target_widget)
-            tree_item.setText(0, item_display_name)
-            tree_item.setData(0, Qt.UserRole, item_data) # 전체 SequenceItem 딕셔너리 저장
-
+            # Loop 노드는 변수명 포함해서 표시
             if item_data.get("action_type") == "Loop":
+                loop_var = item_data.get("loop_variable_name")
+                display_name = item_data.get("display_name", "")
+                if display_name:
+                    loop_title = f"{display_name} : {loop_var}" if loop_var else display_name
+                else:
+                    loop_title = f"Loop : {loop_var}" if loop_var else "Loop"
+                tree_item = QTreeWidgetItem(target_widget)
+                tree_item.setText(0, loop_title)
+                tree_item.setData(0, Qt.UserRole, item_data)
                 looped_actions = item_data.get("looped_actions", [])
                 if looped_actions:
-                    self._add_items_to_tree(looped_actions, tree_item) # 재귀 호출
+                    self._add_items_to_tree(looped_actions, tree_item)
                 tree_item.setExpanded(True)
-
-        # After adding items, update loop variables based on current context
+            else:
+                # 자식 추가 시 부모가 Loop/폴더가 아니면 차단
+                if parent_tree_item and not self._is_parent_allowed_for_child(parent_tree_item):
+                    QMessageBox.warning(self, "추가 불가", "Loop/폴더 노드에만 자식 항목을 추가할 수 있습니다.")
+                    continue
+                item_display_name = item_data.get("display_name", item_data.get("action_type", "Unknown Action"))
+                tree_item = QTreeWidgetItem(target_widget)
+                tree_item.setText(0, item_display_name)
+                tree_item.setData(0, Qt.UserRole, item_data)
         self._update_loop_variables_for_action_panel(self.sequence_list_widget.currentItem())
 
     @pyqtSlot(str)
@@ -810,46 +857,25 @@ class SequenceControllerTab(QWidget):
             event.ignore()
 
     def dropEvent(self, event: QDropEvent):
+        # 드래그&드롭으로 아이템 이동 시 부모 타입 체크
         if not self.sequence_list_widget: return
-        if event.source() != self.sequence_list_widget: # 외부로부터의 드롭은 무시
+        target_pos = event.pos()
+        target_item = self.sequence_list_widget.itemAt(target_pos)
+        # Loop/폴더만 자식 허용
+        if target_item is not None and not self._is_parent_allowed_for_child(target_item):
+            QMessageBox.warning(self, "이동 불가", "Loop/폴더 노드에만 자식 항목을 둘 수 있습니다.")
             event.ignore()
             return
-
-        # 기본 InternalMove 동작이 아이템을 옮기도록 먼저 허용
-        # QTreeWidget의 기본 드롭 처리가 먼저 발생하도록 event.acceptProposedAction()을 호출.
-        # 이 호출은 실제 아이템 이동을 유발할 수 있음.
-        # 주의: acceptProposedAction()을 여기서 호출하면, Qt의 기본 드롭 로직이 먼저 실행되고,
-        # 이후의 코드는 그 결과에 따라 동작해야 합니다. 때로는 이 호출을 맨 마지막에 두거나,
-        # Qt의 기본 처리에 완전히 의존하고 상태 업데이트만 수행할 수도 있습니다.
-        # 여기서는 일단 제안된 위치에 두지만, 필요시 조정 가능합니다.
-        # event.acceptProposedAction() # 이 줄을 먼저 호출하면 아이템이 먼저 이동될 수 있음.
-
-        self.log_message("Sequence item(s) moved via drag and drop.")
-        
-        # 드롭 후, 드롭된 "새로운 위치의 아이템"을 기준으로 컨텍스트를 잡아야 하지만,
-        # Qt의 내부 이동 후 정확한 '새로운 이웃'이나 '새로운 부모'를 파악하는 것은 복잡할 수 있음.
-        # 가장 안전한 방법은 드롭 액션이 완료된 후, 현재 선택된 아이템(보통 드래그된 아이템이 이동 후 선택됨)
-        # 또는 트리의 최상단을 기준으로 루프 변수를 갱신하는 것일 수 있습니다.
-        
-        # 드롭이 일어난 위치의 아이템을 가져옴.
-        # target_item = self.sequence_list_widget.itemAt(event.pos())
-        # print(f"DEBUG_SCT_Drop: Dropped on item: {target_item.text(0) if target_item else 'None'} at pos {event.pos()}")
-
-        # acceptProposedAction()을 먼저 호출하여 Qt가 아이템을 이동시키도록 하고,
-        # 그 이후에 트리의 상태를 기반으로 업데이트하는 것이 더 안정적일 수 있습니다.
-        # super().dropEvent(event) # QTreeWidget의 기본 dropEvent를 명시적으로 호출할 수도 있음
-
-        # 이동이 완료된 후의 아이템을 가져오려고 시도
-        # moved_item = self.sequence_list_widget.currentItem() # 드래그된 아이템이 이동 후 currentItem이 됨
-        # self._update_loop_variables_for_action_panel(moved_item)
-        
-        # 중요: event.acceptProposedAction()을 여기서 호출하면, 이후 itemAt() 등이 drop 이전 상태를 반영할 수 있음.
-        #       InternalMove의 경우, Qt가 대부분 처리하므로, drop 후 상태를 다시 읽는 것이 좋을 수 있음.
-        #       가장 간단한 접근은 드롭 후 selectionChanged 시그널에 의해 업데이트되도록 두거나,
-        #       명시적으로 최상위 아이템 또는 현재 선택된 아이템 기준으로 업데이트하는 것.
-
-        # 해결책: 드롭 액션을 먼저 accept하고, QTimer를 사용하여 UI가 안정화된 후 상태를 업데이트합니다.
-        event.acceptProposedAction() 
+        # 드래그된 아이템이 자식이 될 때도 체크
+        selected_items = self.sequence_list_widget.selectedItems()
+        if selected_items:
+            dragged_item = selected_items[0]
+            parent_of_dragged = dragged_item.parent()
+            if parent_of_dragged and not self._is_parent_allowed_for_child(parent_of_dragged):
+                QMessageBox.warning(self, "이동 불가", "Loop/폴더 노드에만 자식 항목을 둘 수 있습니다.")
+                event.ignore()
+                return
+        super(type(self.sequence_list_widget), self.sequence_list_widget).dropEvent(event)
         QTimer.singleShot(0, lambda: self._update_loop_variables_for_action_panel(self.sequence_list_widget.currentItem()))
 
     # --- End Drag and Drop --- #
@@ -962,18 +988,21 @@ class SequenceControllerTab(QWidget):
                 "display_name": full_str
             }
 
-            parent_of_current = current_item.parent()
+            parent_of_current = current_item.parent() if current_item else None
             target_parent_for_new_item = parent_of_current if parent_of_current else self.sequence_list_widget.invisibleRootItem()
-            
+
             new_tree_item = QTreeWidgetItem()
             new_tree_item.setText(0, full_str)
             new_tree_item.setData(0, Qt.UserRole, new_action_item_data)
 
-            if parent_of_current: # 선택된 아이템이 자식이면, 그 부모의 자식으로 추가
-                # 현재 아이템 다음에 삽입 (선택적)
-                current_index_in_parent = parent_of_current.indexOfChild(current_item)
-                parent_of_current.insertChild(current_index_in_parent + 1, new_tree_item)
-            else: # 선택된 아이템이 최상위면, 그 다음에 최상위로 추가
+            if parent_of_current:
+                if self._is_parent_allowed_for_child(parent_of_current):
+                    current_index_in_parent = parent_of_current.indexOfChild(current_item)
+                    parent_of_current.insertChild(current_index_in_parent + 1, new_tree_item)
+                else:
+                    QMessageBox.warning(self, "추가 불가", "Loop/폴더 노드에만 자식 항목을 추가할 수 있습니다.")
+                    return
+            else:
                 current_top_level_index = self.sequence_list_widget.indexOfTopLevelItem(current_item)
                 self.sequence_list_widget.insertTopLevelItem(current_top_level_index + 1, new_tree_item)
             
@@ -1058,3 +1087,36 @@ class SequenceControllerTab(QWidget):
             self.action_input_panel.update_loop_variables(loop_vars)
 
     # --- End Context Menu --- #
+
+    @pyqtSlot(list, str)
+    def _handle_load_saved_sequence(self, sequence_items: List[SequenceItem], display_name: str):
+        # 기존 트리를 clear하지 않고, 선택된 폴더/루프 노드 아래에 추가, 없으면 최상위에 append
+        parent_item = None
+        if self.sequence_list_widget:
+            selected_items = self.sequence_list_widget.selectedItems()
+            if selected_items:
+                candidate = selected_items[0]
+                if self._is_parent_allowed_for_child(candidate):
+                    parent_item = candidate
+        self._add_items_to_tree(sequence_items, parent_tree_item=parent_item, sequence_display_name=display_name)
+
+    def _is_parent_allowed_for_child(self, parent_item: QTreeWidgetItem) -> bool:
+        # 폴더 노드: UserRole 데이터가 없고 아이콘이 폴더
+        item_data = parent_item.data(0, Qt.UserRole)
+        if item_data is None:
+            # 폴더 노드(시퀀스 제목)로 간주
+            return True
+        if isinstance(item_data, dict) and item_data.get("action_type") == "Loop":
+            return True
+        return False
+
+    def _on_tree_selection_changed(self):
+        if not self.sequence_list_widget or not self.update_action_button:
+            return
+        selected = self.sequence_list_widget.selectedItems()
+        if selected and isinstance(selected[0].data(0, Qt.UserRole), dict):
+            item_data = selected[0].data(0, Qt.UserRole)
+            if item_data.get('action_type') != 'Loop':
+                self.update_action_button.setEnabled(True)
+                return
+        self.update_action_button.setEnabled(False)

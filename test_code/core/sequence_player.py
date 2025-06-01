@@ -4,6 +4,7 @@ import sys
 from typing import List, Tuple, Dict, Any, Optional, ForwardRef, cast
 
 from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton, QDialog, QVBoxLayout, QLabel
 # pyqtSlot은 현재 이 파일에서 직접 사용되지 않으므로, 필요하면 나중에 추가합니다.
 # from PyQt5.QtCore import pyqtSlot 
 
@@ -172,6 +173,46 @@ class SequencePlayer(QObject):
 
             step_success = False
             error_msg = ""
+
+            # HOLD 액션: 팝업 띄우고, Pass 누를 때까지 대기
+            if action_type == constants.SequenceActionType.HOLD.value:
+                hold_name = current_action_item.get("parameters", {}).get("HOLD_NAME", "(No Name)")
+                self.log_message_signal.emit(f"[HOLD] 시퀀스 일시정지: {hold_name}")
+                # UI 스레드에서 모달 다이얼로그 띄우기
+                def show_hold_dialog():
+                    dlg = QDialog()
+                    dlg.setWindowTitle("Sequence Hold")
+                    layout = QVBoxLayout(dlg)
+                    label = QLabel(f"시퀀스가 일시정지되었습니다.\n\n[ {hold_name} ]\n\nPASS를 누르면 다음 단계로 진행합니다.")
+                    label.setWordWrap(True)
+                    layout.addWidget(label)
+                    pass_btn = QPushButton("PASS", dlg)
+                    layout.addWidget(pass_btn)
+                    pass_btn.clicked.connect(dlg.accept)
+                    dlg.setWindowModality(Qt.ApplicationModal)
+                    dlg.setMinimumWidth(320)
+                    return dlg.exec_() == QDialog.Accepted
+                # 반드시 UI 스레드에서 실행
+                app = QApplication.instance()
+                if app:
+                    result = None
+                    def run_dialog():
+                        nonlocal result
+                        result = show_hold_dialog()
+                    app.invokeMethod = getattr(app, 'invokeMethod', None)
+                    if hasattr(app, 'invokeMethod') and callable(app.invokeMethod):
+                        app.invokeMethod(run_dialog)
+                    else:
+                        app.postEvent(app, lambda: run_dialog())
+                        app.processEvents()
+                        result = show_hold_dialog()
+                    if not result:
+                        self.log_message_signal.emit("[HOLD] 사용자가 취소하여 시퀀스를 중단합니다.")
+                        return False, "사용자에 의해 Hold에서 중단됨"
+                else:
+                    self.log_message_signal.emit("[HOLD] QApplication 인스턴스 없음. 자동 PASS.")
+                step_success = True
+                continue
 
             if action_type == "Loop":
                 loop_item = cast(LoopActionItem, current_action_item)

@@ -328,6 +328,19 @@ class ActionInputPanel(QWidget):
         layout_placeholder_i2c.addWidget(QLabel("Select an I2C/Delay action above."), alignment=Qt.AlignCenter)
         self.i2c_params_stack.addWidget(page_placeholder_i2c)
 
+        # Hold (Popup/Hold) 액션 추가
+        self.hold_name_input = QLineEdit()
+        self.hold_name_input.setPlaceholderText("Enter hold name (popup message)")
+        hold_layout = QGridLayout()
+        hold_layout.addWidget(QLabel("Hold Name:"), 0, 0)
+        hold_layout.addWidget(self.hold_name_input, 0, 1)
+        hold_widget = QWidget()
+        hold_widget.setLayout(hold_layout)
+        self.i2c_params_stack.addWidget(hold_widget)
+
+        # 콤보박스 인덱스 매핑에 Hold 추가
+        self.i2c_action_combo.addItem(constants.ACTION_HOLD)
+
     def _create_dmm_sub_tab(self):
         """DMM 액션 입력을 위한 UI를 생성합니다."""
         tab = QWidget(); self.dmm_tab_widget = tab
@@ -552,6 +565,7 @@ class ActionInputPanel(QWidget):
                 elif action_text == constants.ACTION_I2C_READ_NAME: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_NAME)
                 elif action_text == constants.ACTION_I2C_READ_ADDR: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.READ_ADDR)
                 elif action_text == constants.ACTION_DELAY: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.DELAY)
+                elif action_text == constants.ACTION_HOLD: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.PLACEHOLDER + 1) # Hold 위젯 인덱스
                 else: self.i2c_params_stack.setCurrentIndex(self.I2CParamPages.PLACEHOLDER)
 
         # DMM 탭 UI 업데이트
@@ -771,6 +785,12 @@ class ActionInputPanel(QWidget):
                 
                 params_list_for_str.append(f"{constants.SEQ_PARAM_KEY_SECONDS}={delay_val_str}")
                 params_dict_for_data[constants.SEQ_PARAM_KEY_SECONDS] = delay_val_str
+            elif action_text == constants.ACTION_HOLD:
+                hold_name = self.hold_name_input.text().strip()
+                if not hold_name:
+                    QMessageBox.warning(self, "입력 오류", "Hold 이름을 입력하세요.")
+                    return None
+                return (constants.ACTION_HOLD, constants.SequenceActionType.HOLD.value, {"HOLD_NAME": hold_name})
             else:
                 QMessageBox.warning(self, constants.MSG_TITLE_WARNING, constants.MSG_ACTION_NOT_SUPPORTED); return None
         

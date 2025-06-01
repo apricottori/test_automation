@@ -14,6 +14,7 @@ class SequenceActionType(Enum):
     I2C_READ_BY_NAME = "I2C_R_NAME"
     I2C_READ_BY_ADDRESS = "I2C_R_ADDR"
     DELAY_SECONDS = "DELAY_S"
+    HOLD = "HOLD"
     # DMM Actions
     DMM_MEASURE_VOLTAGE = "MM_MEAS_V"
     DMM_MEASURE_CURRENT = "MM_MEAS_I"
@@ -177,6 +178,7 @@ ACTION_I2C_WRITE_ADDR: str = "I2C Write (Address)"
 ACTION_I2C_READ_NAME: str = "I2C Read (Name)"
 ACTION_I2C_READ_ADDR: str = "I2C Read (Address)"
 ACTION_DELAY: str = "Delay (Seconds)"
+ACTION_HOLD: str = "Hold (Popup/Hold)"
 
 ACTION_MM_MEAS_V: str = "DMM Measure Voltage"
 ACTION_MM_MEAS_I: str = "DMM Measure Current"
@@ -198,7 +200,8 @@ ACTION_CHAMBER_CHECK_TEMP: str = "Chamber Wait for Temperature"
 I2C_DELAY_ACTIONS_LIST: list[str] = [
     ACTION_I2C_WRITE_NAME, ACTION_I2C_WRITE_ADDR,
     ACTION_I2C_READ_NAME, ACTION_I2C_READ_ADDR,
-    ACTION_DELAY
+    ACTION_DELAY,
+    ACTION_HOLD
 ]
 DMM_ACTIONS_LIST: list[str] = [
     ACTION_MM_MEAS_V, ACTION_MM_MEAS_I, ACTION_MM_SET_TERMINAL

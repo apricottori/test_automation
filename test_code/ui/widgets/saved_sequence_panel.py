@@ -19,7 +19,7 @@ class SavedSequencePanel(QWidget):
     저장된 테스트 시퀀스 목록을 표시하고 관리하는 UI 패널입니다.
     (로드, 다른 이름으로 저장 요청, 이름 변경, 삭제 기능)
     """
-    load_sequence_to_editor_requested = pyqtSignal(list) # List[str]
+    load_sequence_to_editor_requested = pyqtSignal(list, str) # (items, display_name)
     save_current_sequence_as_requested = pyqtSignal(str) # filename_without_ext
 
     def __init__(self, 
@@ -90,43 +90,37 @@ class SavedSequencePanel(QWidget):
             self.sequence_list_widget.itemDoubleClicked.connect(self._handle_load_button_clicked)
             group_layout.addWidget(self.sequence_list_widget)
 
-            buttons_layout1 = QHBoxLayout()
+            buttons_layout_1x4 = QHBoxLayout()
             self.load_button = QPushButton(constants.LOAD_SEQUENCE_BUTTON_TEXT)
             try:
                 app_instance = QApplication.instance()
                 if app_instance: self.load_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogOpenButton))
             except Exception as e:
                 print(f"Warning (SavedSequencePanel): Could not set icon for load_button: {e}")
-                
             self.save_as_button = QPushButton(constants.SAVE_SEQUENCE_AS_BUTTON_TEXT)
             try:
                 app_instance = QApplication.instance()
                 if app_instance: self.save_as_button.setIcon(app_instance.style().standardIcon(QStyle.SP_DialogSaveButton))
             except Exception as e:
                 print(f"Warning (SavedSequencePanel): Could not set icon for save_as_button: {e}")
-            
-            buttons_layout1.addWidget(self.load_button)
-            buttons_layout1.addWidget(self.save_as_button)
-            group_layout.addLayout(buttons_layout1)
-            
-            buttons_layout2 = QHBoxLayout()
             self.rename_button = QPushButton(constants.RENAME_SEQUENCE_BUTTON_TEXT)
             try:
                 app_instance = QApplication.instance()
                 if app_instance: self.rename_button.setIcon(app_instance.style().standardIcon(QStyle.SP_FileDialogDetailedView))
             except Exception as e:
                 print(f"Warning (SavedSequencePanel): Could not set icon for rename_button: {e}")
-                
             self.delete_button = QPushButton(constants.DELETE_SEQUENCE_BUTTON_TEXT)
             try:
                 app_instance = QApplication.instance()
                 if app_instance: self.delete_button.setIcon(app_instance.style().standardIcon(QStyle.SP_TrashIcon))
             except Exception as e:
                 print(f"Warning (SavedSequencePanel): Could not set icon for delete_button: {e}")
-            
-            buttons_layout2.addWidget(self.rename_button)
-            buttons_layout2.addWidget(self.delete_button)
-            group_layout.addLayout(buttons_layout2)
+            # 버튼을 1x4로 가로 배치
+            buttons_layout_1x4.addWidget(self.load_button)
+            buttons_layout_1x4.addWidget(self.save_as_button)
+            buttons_layout_1x4.addWidget(self.rename_button)
+            buttons_layout_1x4.addWidget(self.delete_button)
+            group_layout.addLayout(buttons_layout_1x4)
             
             main_layout.addWidget(group_box)
             
@@ -196,7 +190,8 @@ class SavedSequencePanel(QWidget):
             
         loaded_items = self._io_manager.load_sequence(filepath)
         if loaded_items is not None:
-            self.load_sequence_to_editor_requested.emit(loaded_items)
+            display_name = selected_item.text() if selected_item else "Loaded Sequence"
+            self.load_sequence_to_editor_requested.emit(loaded_items, display_name)
         else:
             QMessageBox.warning(self, "로드 실패", f"'{selected_item.text()}' 시퀀스를 로드하는데 실패했습니다.")
 

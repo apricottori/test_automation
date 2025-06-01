@@ -332,6 +332,18 @@ class Multimeter(GPIBDevice):
         # Match the device_name string used in your connect logic
         super().__init__(serial_number_str, "Multimeter (Agilent34401A)", agilent34401a_runtime_class)
 
+    def connect(self) -> bool:
+        # Override to always disable beep after connecting
+        connected = super().connect()
+        if connected:
+            # Try to disable beep
+            try:
+                self.gpib_write("SYST:BEEP:STAT OFF")
+                print("INFO: DMM beep disabled (SYST:BEEP:STAT OFF sent)")
+            except Exception as e:
+                print(f"Warning: Failed to disable DMM beep: {e}")
+        return connected
+
     def measure_voltage(self) -> tuple[bool, Optional[float]]:
         if not self.is_connected or not self.instrument: 
             print(f"DEBUG_DMM_MV: Not connected or no instrument. Connected: {self.is_connected}, Instrument: {self.instrument}")
@@ -686,7 +698,9 @@ class Chamber(GPIBDevice, QObject):
                     if not value_str:
                         return False, None
                     current_temp_float = float(value_str)
-                    return True, current_temp_float
+                    # 소수점 첫째 자리까지 버림
+                    truncated_temp = float(int(current_temp_float * 10) / 10)
+                    return True, truncated_temp
                 except (ValueError, TypeError):
                     print(f"Error: Chamber 현재 온도 값 파싱 오류: {current_temp_val}")
                     return False, None
